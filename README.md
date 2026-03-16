@@ -95,7 +95,7 @@ Select your team in **Signing & Capabilities**, then build with **⌘B**.
 
 1. Sign in to [Apple Business Manager](https://business.apple.com) or [Apple School Manager](https://school.apple.com)
 2. Go to **Settings → API** and click **+** to create a new key
-3. Download the `.p8` private key file — Apple only lets you download it once
+3. Download the `.pem` private key file — Apple only lets you download it once
 4. Note the **Client ID** and **Key ID** shown on the API key detail page
 
 ### 2 — Create a Jamf Pro API Client
@@ -112,7 +112,7 @@ Select your team in **Signing & Capabilities**, then build with **⌘B**.
 ### 3 — Configure AxM Jamf Sync
 
 1. Launch the app and go to the **Setup** tab
-2. Under **Apple Manager**, select **ABM** or **ASM**, enter your Client ID and Key ID, then click **Choose…** to load your `.p8` key file
+2. Under **Apple Manager**, select **ABM** or **ASM**, enter your Client ID and Key ID, then click **Choose…** to load your `.pem` key file
 3. Tick **Save to Keychain** and click **Test Auth** — you should see a green tick
 4. Under **Jamf Pro**, enter your server URL, Client ID, and Client Secret
 5. Tick **Save to Keychain** and click **Test Auth**
@@ -166,7 +166,7 @@ Detailed guides and additional documentation are available in the [Project Wiki]
 
 | Problem | What to check |
 |---------|---------------|
-| **"Test Auth" fails for ABM/ASM** | Confirm Client ID, Key ID, and that the `.p8` file matches the key in ABM/ASM |
+| **"Test Auth" fails for ABM/ASM** | Confirm Client ID, Key ID, and that the `.pem` file matches the key in ABM/ASM |
 | **"Test Auth" fails for Jamf** | Check the server URL has no trailing slash; confirm the API client has not expired |
 | **Coverage shows 0 fetched** | Check ABM/ASM has the correct device records; confirm the API key has not been revoked |
 | **Jamf Update shows all Failed** | Confirm the API Role includes Update Computers / Update Mobile Devices |
