@@ -1,0 +1,398 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A022 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A023 /* PrivacyInfo.xcprivacy */; };
+		B001 /* AxMJamfSyncApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001 /* AxMJamfSyncApp.swift */; };
+		B002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A002 /* Models.swift */; };
+		B003 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A003 /* AppStore.swift */; };
+		B004 /* AppPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = A004 /* AppPreferences.swift */; };
+		B005 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A005 /* KeychainService.swift */; };
+		B006 /* PersistenceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A006 /* PersistenceController.swift */; };
+		B007 /* LogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A007 /* LogService.swift */; };
+		B008 /* SyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A008 /* SyncEngine.swift */; };
+		B009 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A009 /* ContentView.swift */; };
+		B010 /* SetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A010 /* SetupView.swift */; };
+		B011 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A011 /* DashboardView.swift */; };
+		B012 /* DevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A012 /* DevicesView.swift */; };
+		B013 /* ExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A013 /* ExportView.swift */; };
+		B014 /* SyncPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A014 /* SyncPanelView.swift */; };
+		B015 /* AxMJamfSync.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = A015 /* AxMJamfSync.xcdatamodeld */; };
+		B016 /* ABMService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A018 /* ABMService.swift */; };
+		B017 /* JamfService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A019 /* JamfService.swift */; };
+		B018 /* SyncNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A020 /* SyncNotificationService.swift */; };
+		B019 /* TLSDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A021 /* TLSDelegate.swift */; };
+		CEFCAF082F6473A10006190D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEFCAF072F6473A10006190D /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A001 /* AxMJamfSyncApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AxMJamfSyncApp.swift; sourceTree = "<group>"; };
+		A002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A003 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
+		A004 /* AppPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPreferences.swift; sourceTree = "<group>"; };
+		A005 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
+		A006 /* PersistenceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceController.swift; sourceTree = "<group>"; };
+		A007 /* LogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogService.swift; sourceTree = "<group>"; };
+		A008 /* SyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncEngine.swift; sourceTree = "<group>"; };
+		A009 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A010 /* SetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupView.swift; sourceTree = "<group>"; };
+		A011 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		A012 /* DevicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicesView.swift; sourceTree = "<group>"; };
+		A013 /* ExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportView.swift; sourceTree = "<group>"; };
+		A014 /* SyncPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncPanelView.swift; sourceTree = "<group>"; };
+		A015 /* AxMJamfSync.xcdatamodeld */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = AxMJamfSync.xcdatamodeld; sourceTree = "<group>"; };
+		A016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A017 /* AxMJamfSync.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AxMJamfSync.entitlements; sourceTree = "<group>"; };
+		A018 /* ABMService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ABMService.swift; sourceTree = "<group>"; };
+		A019 /* JamfService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JamfService.swift; sourceTree = "<group>"; };
+		A020 /* SyncNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncNotificationService.swift; sourceTree = "<group>"; };
+		A021 /* TLSDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSDelegate.swift; sourceTree = "<group>"; };
+		A023 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		CEFCAF072F6473A10006190D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		PROD /* AxMJamfSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = AxMJamfSync.app; path = "AxM Jamf Sync.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		FRM1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		GRP_PROD /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				PROD /* AxMJamfSync.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		GRP_ROOT = {
+			isa = PBXGroup;
+			children = (
+				GRP_SRC /* AxMJamfSync */,
+				GRP_PROD /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		GRP_SRC /* AxMJamfSync */ = {
+			isa = PBXGroup;
+			children = (
+				A001 /* AxMJamfSyncApp.swift */,
+				A002 /* Models.swift */,
+				A003 /* AppStore.swift */,
+				A004 /* AppPreferences.swift */,
+				A005 /* KeychainService.swift */,
+				A006 /* PersistenceController.swift */,
+				A007 /* LogService.swift */,
+				A008 /* SyncEngine.swift */,
+				A009 /* ContentView.swift */,
+				A010 /* SetupView.swift */,
+				A011 /* DashboardView.swift */,
+				A012 /* DevicesView.swift */,
+				A013 /* ExportView.swift */,
+				A014 /* SyncPanelView.swift */,
+				A015 /* AxMJamfSync.xcdatamodeld */,
+				A016 /* Info.plist */,
+				A023 /* PrivacyInfo.xcprivacy */,
+				A017 /* AxMJamfSync.entitlements */,
+				A018 /* ABMService.swift */,
+				A019 /* JamfService.swift */,
+				A020 /* SyncNotificationService.swift */,
+				A021 /* TLSDelegate.swift */,
+				CEFCAF072F6473A10006190D /* Assets.xcassets */,
+			);
+			path = AxMJamfSync;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		TGT1 /* AxMJamfSync */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CFG_LIST /* Build configuration list for PBXNativeTarget "AxMJamfSync" */;
+			buildPhases = (
+				SRC1 /* Sources */,
+				FRM1 /* Frameworks */,
+				RES1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AxMJamfSync;
+			productName = "AxM Jamf Sync";
+			productReference = PROD /* AxMJamfSync.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		PROJ /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 2630;
+				TargetAttributes = {
+					TGT1 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = PROJ_CFG_LIST /* Build configuration list for PBXProject "AxMJamfSync" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = GRP_ROOT;
+			productRefGroup = GRP_PROD /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				TGT1 /* AxMJamfSync */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		RES1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CEFCAF082F6473A10006190D /* Assets.xcassets in Resources */,
+				A022 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		SRC1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B001 /* AxMJamfSyncApp.swift in Sources */,
+				B002 /* Models.swift in Sources */,
+				B003 /* AppStore.swift in Sources */,
+				B004 /* AppPreferences.swift in Sources */,
+				B005 /* KeychainService.swift in Sources */,
+				B006 /* PersistenceController.swift in Sources */,
+				B007 /* LogService.swift in Sources */,
+				B008 /* SyncEngine.swift in Sources */,
+				B009 /* ContentView.swift in Sources */,
+				B010 /* SetupView.swift in Sources */,
+				B011 /* DashboardView.swift in Sources */,
+				B012 /* DevicesView.swift in Sources */,
+				B013 /* ExportView.swift in Sources */,
+				B014 /* SyncPanelView.swift in Sources */,
+				B015 /* AxMJamfSync.xcdatamodeld in Sources */,
+				B016 /* ABMService.swift in Sources */,
+				B017 /* JamfService.swift in Sources */,
+				B018 /* SyncNotificationService.swift in Sources */,
+				B019 /* TLSDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		CFG_DEBUG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 5K8AQDEXGG;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		CFG_RELEASE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 5K8AQDEXGG;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		TGT_CFG_DEBUG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = AxMJamfSync/AxMJamfSync.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AxMJamfSync/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "AxM Jamf Sync";
+				INFOPLIST_KEY_CFBundleName = "AxM Jamf Sync";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
+				PRODUCT_NAME = "AxM Jamf Sync";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		TGT_CFG_RELEASE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = AxMJamfSync/AxMJamfSync.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AxMJamfSync/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "AxM Jamf Sync";
+				INFOPLIST_KEY_CFBundleName = "AxM Jamf Sync";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
+				PRODUCT_NAME = "AxM Jamf Sync";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		CFG_LIST /* Build configuration list for PBXNativeTarget "AxMJamfSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				TGT_CFG_DEBUG /* Debug */,
+				TGT_CFG_RELEASE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		PROJ_CFG_LIST /* Build configuration list for PBXProject "AxMJamfSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CFG_DEBUG /* Debug */,
+				CFG_RELEASE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = PROJ /* Project object */;
+}

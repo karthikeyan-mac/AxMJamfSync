@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0"
+       lastSavedToolsVersion="21754" systemVersion="22F82"
+       minimumToolsVersion="Automatic" sourceLanguage="Swift"
+       userDefinedModelVersionIdentifier="">
+
+    <entity name="CDDevice" representedClassName="CDDevice"
+            syncable="YES" codeGenerationType="class">
+
+        <attribute name="serialNumber"         optional="NO"  attributeType="String"/>
+        <attribute name="deviceSource"         optional="NO"  attributeType="String" defaultValueString="AXM_ONLY"/>
+
+        <!-- AxM -->
+        <attribute name="axmDeviceId"          optional="YES" attributeType="String"/>
+        <attribute name="axmDeviceStatus"      optional="YES" attributeType="String"/>
+        <attribute name="axmDeviceFetchedAt"   optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="axmPurchaseSource"    optional="YES" attributeType="String"/>
+        <attribute name="axmModel"             optional="YES" attributeType="String"/>
+        <attribute name="axmDeviceModel"       optional="YES" attributeType="String"/>
+        <attribute name="axmDeviceClass"       optional="YES" attributeType="String"/>
+        <attribute name="axmProductFamily"     optional="YES" attributeType="String"/>   <!-- "Mac" | "iPad" | "iPhone" | "AppleTV" -->
+        <attribute name="axmRawJson"           optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES"/>
+        <attribute name="axmCoverageRawJson"   optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES"/>
+
+        <!-- Coverage -->
+        <attribute name="axmCoverageStatus"    optional="YES" attributeType="String"/>
+        <attribute name="axmCoverageEndDate"   optional="YES" attributeType="String"/>
+        <attribute name="axmCoverageFetchedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="axmAgreementNumber"   optional="YES" attributeType="String"/>
+
+        <!-- Write-back -->
+        <attribute name="wbStatus"             optional="YES" attributeType="String"/>
+        <attribute name="wbPushedAt"           optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="wbNote"               optional="YES" attributeType="String"/>
+
+        <!-- Jamf -->
+        <attribute name="jamfId"               optional="YES" attributeType="String"/>
+        <attribute name="jamfName"             optional="YES" attributeType="String"/>
+        <attribute name="jamfManaged"          optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="jamfModel"            optional="YES" attributeType="String"/>
+        <attribute name="jamfModelIdentifier"  optional="YES" attributeType="String"/>
+        <attribute name="jamfMacAddress"       optional="YES" attributeType="String"/>
+        <attribute name="jamfReportDate"       optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="jamfLastContact"      optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="jamfLastEnrolled"     optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="jamfWarrantyDate"     optional="YES" attributeType="String"/>
+        <attribute name="jamfVendor"           optional="YES" attributeType="String"/>
+        <attribute name="jamfAppleCareId"      optional="YES" attributeType="String"/>
+        <attribute name="jamfOsVersion"        optional="YES" attributeType="String"/>
+        <attribute name="jamfDeviceType"       optional="YES" attributeType="String"/>   <!-- "computer" | "mobile" -->
+        <attribute name="jamfFileVaultStatus"  optional="YES" attributeType="String"/>
+        <attribute name="jamfUsername"         optional="YES" attributeType="String"/>
+
+        <!-- Metadata -->
+        <attribute name="createdAt"            optional="NO"  attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="updatedAt"            optional="NO"  attributeType="Date" usesScalarValueType="NO"/>
+
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="serialNumber"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+
+    <entity name="CDSyncRun" representedClassName="CDSyncRun"
+            syncable="YES" codeGenerationType="class">
+        <attribute name="id"              optional="NO"  attributeType="UUID"       usesScalarValueType="NO"/>
+        <attribute name="startedAt"       optional="NO"  attributeType="Date"       usesScalarValueType="NO"/>
+        <attribute name="finishedAt"      optional="YES" attributeType="Date"       usesScalarValueType="NO"/>
+        <attribute name="phase"           optional="NO"  attributeType="String"     defaultValueString="IDLE"/>
+        <attribute name="axmFetched"      optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="jamfFetched"     optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="coverageFetched" optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="wbSynced"        optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="wbFailed"        optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="errorMessage"    optional="YES" attributeType="String"/>
+    </entity>
+
+</model>

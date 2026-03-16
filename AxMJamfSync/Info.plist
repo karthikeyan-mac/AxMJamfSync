@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.karthikmac.axmjamfsync</string>
+	<key>CFBundleName</key>
+	<string>AxM Jamf Sync</string>
+	<key>CFBundleDisplayName</key>
+	<string>AxM Jamf Sync</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Karthikeyan Marappan. All rights reserved.</string>
+
+	<!-- Usage description for Keychain (shown in sandbox prompts) -->
+	<key>NSKeychainUsageDescription</key>
+	<string>AxM Jamf Sync stores your API credentials securely in the macOS Keychain.</string>
+
+	<!-- Privacy — network usage (for App Store review) -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>AxM Jamf Sync sends a notification when a sync run completes or fails.</string>
+</dict>
+</plist>

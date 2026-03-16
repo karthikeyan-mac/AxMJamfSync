@@ -1,0 +1,290 @@
+// KeychainService.swift
+// Keychain CRUD for all credentials and tokens — App Sandbox / entitlement compliant.
+//
+// Stored items (kSecClassGenericPassword, kSecAttrService = bundle ID):
+//   axm.scope          — active scope string ("business" or "school")
+//   abm.clientId / abm.keyId / abm.privKey  — ABM credentials
+//   asm.clientId / asm.keyId / asm.privKey  — ASM credentials
+//   abm.token / abm.tokenExpiry             — ABM bearer token cache
+//   asm.token / asm.tokenExpiry             — ASM bearer token cache
+//   jamf.clientId / jamf.clientSecret / jamf.baseURL
+//   jamf.token / jamf.tokenExpiry           — Jamf OAuth2 token cache
+//
+// wipeCache() in AppStore resets axm.scope in BOTH UserDefaults and Keychain.
+
+import Foundation
+import Security
+
+enum KeychainService {
+
+    // Service name = bundle ID — makes items unique to this app in the Keychain.
+    private static let service = "com.karthikmac.axmjamfsync"
+
+    // MARK: - Key enum — one case per secret
+    enum Key: String {
+        case axmScope             = "axm.scope"           // which account type is active
+        // Business (ABM) credentials
+        case axmBizClientId       = "axm.business.clientId"
+        case axmBizKeyId          = "axm.business.keyId"
+        case axmBizPrivateKey     = "axm.business.privateKeyContent"
+        // School (ASM) credentials
+        case axmSchoolClientId    = "axm.school.clientId"
+        case axmSchoolKeyId       = "axm.school.keyId"
+        case axmSchoolPrivateKey  = "axm.school.privateKeyContent"
+        // Legacy flat keys (kept for one-time migration on first launch)
+        case _legacyAxmClientId   = "axm.clientId"
+        case _legacyAxmKeyId      = "axm.keyId"
+        case _legacyAxmPrivKey    = "axm.privateKeyContent"
+        case jamfURL           = "jamf.url"
+        case jamfClientId      = "jamf.clientId"
+        case jamfClientSecret  = "jamf.clientSecret"
+        case jamfPageSize      = "jamf.pageSize"
+        // Cached Apple access tokens — stored with expiry so ABMService can reuse
+        // across runs and avoid 429s from Apple's token endpoint rate limit.
+        case axmBizToken       = "axm.business.accessToken"
+        case axmBizTokenExpiry = "axm.business.accessTokenExpiry"   // Unix epoch Double as String
+        case axmSchoolToken       = "axm.school.accessToken"
+        case axmSchoolTokenExpiry = "axm.school.accessTokenExpiry"
+        // S2: Cached Jamf access token — persisted so JamfService can reuse across launches.
+        // Jamf tokens have a 30-minute TTL; caching avoids a round-trip on every app start.
+        case jamfAccessToken       = "jamf.accessToken"
+        case jamfAccessTokenExpiry = "jamf.accessTokenExpiry"
+    }
+
+    // MARK: - Save
+    @discardableResult
+    static func save(_ value: String, for key: Key) -> Bool {
+        guard let data = value.data(using: .utf8) else { return false }
+        let query: [String: Any] = [
+            kSecClass               as String: kSecClassGenericPassword,
+            kSecAttrService         as String: service,
+            kSecAttrAccount         as String: key.rawValue,
+            kSecAttrSynchronizable  as String: false,  // never sync to iCloud Keychain
+        ]
+        let attrs: [String: Any] = [kSecValueData as String: data]
+        let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = query
+            add[kSecValueData      as String] = data
+            // S4: kSecAttrAccessibleWhenUnlockedThisDeviceOnly — same as WhenUnlocked
+            // but explicitly non-portable: items are NOT synced to iCloud Keychain and
+            // cannot be transferred to another device. Enterprise credentials (Apple API
+            // private keys, Jamf secrets) should never leave this machine.
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+        }
+        return status == errSecSuccess
+    }
+
+    // MARK: - Load
+    static func load(for key: Key) -> String? {
+        let query: [String: Any] = [
+            kSecClass              as String: kSecClassGenericPassword,
+            kSecAttrService        as String: service,
+            kSecAttrAccount        as String: key.rawValue,
+            kSecAttrSynchronizable as String: false,
+            kSecReturnData         as String: true,
+            kSecMatchLimit         as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    // MARK: - Delete
+    @discardableResult
+    static func delete(for key: Key) -> Bool {
+        let query: [String: Any] = [
+            kSecClass              as String: kSecClassGenericPassword,
+            kSecAttrService        as String: service,
+            kSecAttrAccount        as String: key.rawValue,
+            kSecAttrSynchronizable as String: false,
+        ]
+        return SecItemDelete(query as CFDictionary) == errSecSuccess
+    }
+
+    // MARK: - Convenience loaders
+    /// Returns credential keys for a given scope
+    private static func clientIdKey(for scope: AxMScope) -> Key {
+        scope == .school ? .axmSchoolClientId : .axmBizClientId
+    }
+    private static func keyIdKey(for scope: AxMScope) -> Key {
+        scope == .school ? .axmSchoolKeyId : .axmBizKeyId
+    }
+    private static func privKeyKey(for scope: AxMScope) -> Key {
+        scope == .school ? .axmSchoolPrivateKey : .axmBizPrivateKey
+    }
+
+    static func loadAxMCredentials() -> AxMCredentials {
+        var c = AxMCredentials()
+        c.scope = AxMScope(rawValue: load(for: .axmScope) ?? "") ?? .business
+        c.clientId          = load(for: clientIdKey(for: c.scope)) ?? ""
+        c.keyId             = load(for: keyIdKey(for: c.scope))    ?? ""
+        c.privateKeyContent = load(for: privKeyKey(for: c.scope))  ?? ""
+        c.privateKeyPath    = ""  // path is never persisted
+        // One-time migration from legacy flat keys (pre-scope-split)
+        if c.clientId.isEmpty, let legacy = load(for: ._legacyAxmClientId), !legacy.isEmpty {
+            c.clientId = legacy
+            save(legacy, for: clientIdKey(for: c.scope))
+            delete(for: ._legacyAxmClientId)
+        }
+        if c.keyId.isEmpty, let legacy = load(for: ._legacyAxmKeyId), !legacy.isEmpty {
+            c.keyId = legacy
+            save(legacy, for: keyIdKey(for: c.scope))
+            delete(for: ._legacyAxmKeyId)
+        }
+        if c.privateKeyContent.isEmpty, let legacy = load(for: ._legacyAxmPrivKey), !legacy.isEmpty {
+            c.privateKeyContent = legacy
+            save(legacy, for: privKeyKey(for: c.scope))
+            delete(for: ._legacyAxmPrivKey)
+        }
+
+        // ── Keychain credential diagnostics (logged at sync start) ───────────
+        let scopeLabel  = c.scope == .school ? "ASM" : "ABM"
+        let hasClientId = !c.clientId.isEmpty
+        let hasKeyId    = !c.keyId.isEmpty
+        let hasPrivKey  = !c.privateKeyContent.isEmpty
+        let allPresent  = hasClientId && hasKeyId && hasPrivKey
+        Task { @MainActor in
+            let log = LogService.shared
+            log.debug("[Keychain] \(scopeLabel) credentials — " +
+                "clientId: \(hasClientId ? c.clientId.prefix(8) + "…" : "⚠ MISSING") | " +
+                "keyId: \(hasKeyId ? c.keyId.prefix(8) + "…" : "⚠ MISSING") | " +
+                "privateKey: \(hasPrivKey ? "\(c.privateKeyContent.count) chars" : "⚠ MISSING")")
+            if !allPresent {
+                log.warn("[Keychain] \(scopeLabel) credentials incomplete — sync will fail. Configure in Setup.")
+            }
+
+            // Token cache status
+            if let cached = loadAxMToken(for: c.scope) {
+                let mins = Int(cached.expiry.timeIntervalSinceNow) / 60
+                let secs = Int(cached.expiry.timeIntervalSinceNow) % 60
+                log.debug("[Keychain] \(scopeLabel) access token: cached — valid for \(mins)m \(secs)s.")
+            } else {
+                log.debug("[Keychain] \(scopeLabel) access token: not cached (will be fetched from Apple on first API call).")
+            }
+
+            // Jamf credential status
+            let j = loadJamfCredentials()
+            let hasJamfURL    = !j.url.isEmpty
+            let hasJamfClient = !j.clientId.isEmpty
+            let hasJamfSecret = !j.clientSecret.isEmpty
+            log.debug("[Keychain] Jamf credentials — " +
+                "url: \(hasJamfURL ? j.url : "⚠ MISSING") | " +
+                "clientId: \(hasJamfClient ? j.clientId.prefix(8) + "…" : "⚠ MISSING") | " +
+                "clientSecret: \(hasJamfSecret ? "present" : "⚠ MISSING")")
+            if !hasJamfURL || !hasJamfClient || !hasJamfSecret {
+                log.warn("[Keychain] Jamf credentials incomplete — Jamf steps will be skipped.")
+            }
+        }
+
+        return c
+    }
+
+    /// Load credentials for a specific scope (used when switching account type)
+    static func loadAxMCredentials(for scope: AxMScope) -> AxMCredentials {
+        var c = AxMCredentials()
+        c.scope             = scope
+        c.clientId          = load(for: clientIdKey(for: scope))  ?? ""
+        c.keyId             = load(for: keyIdKey(for: scope))     ?? ""
+        c.privateKeyContent = load(for: privKeyKey(for: scope))   ?? ""
+        c.privateKeyPath    = ""
+        return c
+    }
+
+    static func saveAxMCredentials(_ c: AxMCredentials) {
+        save(c.scope.rawValue,    for: .axmScope)
+        save(c.clientId,          for: clientIdKey(for: c.scope))
+        save(c.keyId,             for: keyIdKey(for: c.scope))
+        if !c.privateKeyContent.isEmpty {
+            save(c.privateKeyContent, for: privKeyKey(for: c.scope))
+        }
+    }
+
+    static func loadJamfCredentials() -> JamfCredentials {
+        var c = JamfCredentials()
+        c.url          = load(for: .jamfURL)          ?? ""
+        c.clientId     = load(for: .jamfClientId)     ?? ""
+        c.clientSecret = load(for: .jamfClientSecret) ?? ""
+        // Load saved pageSize; snap to nearest 500-step value (500/1000/1500/2000).
+        // Older saves may have stored 200 — clamp those to 1000 (default).
+        let rawSize = Int(load(for: .jamfPageSize) ?? "1000") ?? 1000
+        let validSizes = [500, 1000, 1500, 2000]
+        c.pageSize = validSizes.min(by: { abs($0 - rawSize) < abs($1 - rawSize) }) ?? 1000
+        return c
+    }
+
+    static func saveJamfCredentials(_ c: JamfCredentials) {
+        save(c.url,              for: .jamfURL)
+        save(c.clientId,         for: .jamfClientId)
+        save(c.clientSecret,     for: .jamfClientSecret)
+        save(String(c.pageSize), for: .jamfPageSize)
+    }
+
+    // MARK: - Apple access token persistence
+    // Tokens are cached in Keychain so ABMService can reuse them across app launches
+    // and avoid hitting Apple's token endpoint rate limit (429) on back-to-back syncs.
+
+    private static func tokenKey(for scope: AxMScope) -> Key {
+        scope == .school ? .axmSchoolToken : .axmBizToken
+    }
+    private static func tokenExpiryKey(for scope: AxMScope) -> Key {
+        scope == .school ? .axmSchoolTokenExpiry : .axmBizTokenExpiry
+    }
+
+    /// Save an Apple access token and its expiry date to Keychain.
+    static func saveAxMToken(_ token: String, expiry: Date, for scope: AxMScope) {
+        save(token,                                        for: tokenKey(for: scope))
+        save(String(expiry.timeIntervalSince1970),        for: tokenExpiryKey(for: scope))
+    }
+
+    /// Load a cached Apple access token if it is still valid (>60s remaining).
+    /// Returns nil when no token is stored or it has expired / is about to expire.
+    static func loadAxMToken(for scope: AxMScope) -> (token: String, expiry: Date)? {
+        guard let token  = load(for: tokenKey(for: scope)), !token.isEmpty,
+              let expStr = load(for: tokenExpiryKey(for: scope)),
+              let epoch  = Double(expStr) else { return nil }
+        let expiry = Date(timeIntervalSince1970: epoch)
+        // Treat token as unusable if less than 5 minutes remain — matches the
+        // 300s guard in ABMService.validToken() so a token near expiry isn't
+        // loaded from Keychain only to be immediately discarded and re-fetched.
+        guard expiry.timeIntervalSinceNow > 300 else { return nil }
+        return (token, expiry)
+    }
+
+    /// Evict the cached token for a scope (call after 401 or explicit cache reset).
+    static func clearAxMToken(for scope: AxMScope) {
+        delete(for: tokenKey(for: scope))
+        delete(for: tokenExpiryKey(for: scope))
+    }
+
+    // MARK: - Jamf access token persistence (S2)
+    // JamfService previously cached tokens only in memory, losing them on every app restart.
+    // These methods mirror the AxM token pattern so Jamf tokens survive across launches.
+    // Jamf TTL is 30 minutes; we evict if <60s remain (same guard as AxM).
+
+    /// Save a Jamf OAuth access token and its expiry to Keychain.
+    static func saveJamfToken(_ token: String, expiry: Date) {
+        save(token,                                    for: .jamfAccessToken)
+        save(String(expiry.timeIntervalSince1970),    for: .jamfAccessTokenExpiry)
+    }
+
+    /// Load a cached Jamf token if it still has >60s remaining.
+    static func loadJamfToken() -> (token: String, expiry: Date)? {
+        guard let token  = load(for: .jamfAccessToken), !token.isEmpty,
+              let expStr = load(for: .jamfAccessTokenExpiry),
+              let epoch  = Double(expStr) else { return nil }
+        let expiry = Date(timeIntervalSince1970: epoch)
+        // Jamf tokens have a 30-min TTL. Require at least 5 minutes remaining
+        // to avoid fetching a new token on every run near expiry.
+        guard expiry.timeIntervalSinceNow > 300 else { return nil }
+        return (token, expiry)
+    }
+
+    /// Evict the cached Jamf token (call after 401 or explicit logout).
+    static func clearJamfToken() {
+        delete(for: .jamfAccessToken)
+        delete(for: .jamfAccessTokenExpiry)
+    }
+}

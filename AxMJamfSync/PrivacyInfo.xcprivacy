@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Privacy Nutrition Label — required for Mac App Store and notarization (Xcode 15+).
+	     AxM Jamf Sync does NOT collect any data. All data stays on this device.
+	     No analytics, no crash reporting, no third-party SDKs. -->
+
+	<key>NSPrivacyTracking</key>
+	<false/>
+
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!-- Required Reasons APIs used by this app -->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<!-- UserDefaults: stores app preferences (cache TTL, sync timestamps, UI state).
+		     No user-identifying data is stored. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- CA92.1: Access info from the same app -->
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<!-- File timestamp: log rotation checks file size/modification time -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- C617.1: Manage file rotation within the app's container -->
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- Data collected: none -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+</dict>
+</plist>
