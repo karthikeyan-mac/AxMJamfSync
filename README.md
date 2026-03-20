@@ -73,7 +73,7 @@ If you encounter any bugs, notice issues, or have suggestions for improvements o
 
 ### Option A — Download release (recommended)
 
-1. Download the latest `AxMJamfSync.dmg` from the [Releases](../../releases) page
+1. Download the latest application `AxMJamfSync.dmg` from the [Releases](../../releases) page
 2. Open the DMG and drag **AxM Jamf Sync** to your Applications folder
 3. Launch the app — it is signed and notarized, so Gatekeeper will open it without warnings
 
