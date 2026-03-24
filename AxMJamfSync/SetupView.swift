@@ -131,6 +131,8 @@ struct AxMCredentialsPanel: View {
                             store.axmAuthStatus  = .idle
                             // Only re-save if creds for this scope were already in Keychain
                             if !saved.clientId.isEmpty { store.saveAxMCredentials() }
+                            // Sync the toggle — reflect whether THIS scope has saved credentials
+                            saveToKeychain = !saved.clientId.isEmpty
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: scope == .school

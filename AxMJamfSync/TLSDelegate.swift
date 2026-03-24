@@ -1,5 +1,9 @@
 // TLSDelegate.swift
-// URLSessionDelegate for certificate pinning / TLS validation.
+// URLSessionDelegate for TLS server trust validation.
+// Evaluates the server certificate chain against the macOS system trust store,
+// rejecting self-signed certs, expired certs, and custom root CAs (MITM proxies).
+// This is stricter than default URLSession behaviour but is NOT certificate pinning
+// (pinning would check against a specific known cert/key, not the system store).
 // Applied to all URLSessions (ABM device, ABM coverage, Jamf, token endpoints).
 
 import Foundation

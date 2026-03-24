@@ -3,6 +3,7 @@
 // © 2026 Karthikeyan Marappan. All rights reserved. Initialises AppStore, SyncEngine, LogService.
 // Menu bar: Help menu, About panel, Quit (clears Jamf token on exit).
 
+import os
 import SwiftUI
 import CoreData
 import AppKit
@@ -44,6 +45,8 @@ struct AxMJamfSyncApp: App {
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: true))
+        // Forces SwiftUI to subscribe to isRunning so the scene re-renders when sync
+        // starts/stops — needed for dock badge and menu bar state to update correctly.
         .onChange(of: syncEngine.isRunning) { _, _ in }
         .commands {
             CommandGroup(replacing: .newItem) {}
@@ -107,6 +110,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Also clear the other scope defensively (no-op if no token stored)
         let otherScope: AxMScope = scope == .school ? .business : .school
         KeychainService.clearAxMToken(for: otherScope)
-        print("[AppDelegate] Apple AxM token cleared from Keychain on app quit.")
+        os_log(.default, "[AppDelegate] Apple AxM token cleared from Keychain on app quit.")
     }
 }

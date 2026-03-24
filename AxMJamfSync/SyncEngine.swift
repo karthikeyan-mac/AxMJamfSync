@@ -112,7 +112,13 @@ final class SyncEngine: ObservableObject {
         let forceCoverage = store.prefs.alwaysRefreshCoverage
         store.prefs.alwaysRefreshDevices  = false
         store.prefs.alwaysRefreshCoverage = false
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        // Only request notification authorisation when status is undetermined —
+        // re-requesting after grant/deny is a no-op but avoids an unnecessary system call.
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            if settings.authorizationStatus == .notDetermined {
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+            }
+        }
         tabBadge = "●"
         NSApp.dockTile.badgeLabel = "1/4"
         syncTask = Task { await _run(store: store, forceDevices: forceDevices, forceCoverage: forceCoverage) }
@@ -259,6 +265,12 @@ final class SyncEngine: ObservableObject {
             if !forceDevices && prefs.axmIsFresh && !coreDataEmpty {
                 log.info("Step 1/4 — AxM cache fresh (last synced \(prefs.display(prefs.lastAxmSync))), skipping.")
             } else {
+                // If Force Refresh Devices is ON, discard any saved resume cursor —
+                // a force refresh always starts from page 1 with fresh data.
+                if forceDevices {
+                    prefs.clearAxmResumeCursor()
+                    log.info("Step 1/4 — Force Refresh: cleared saved resume cursor.")
+                }
                 phase     = .axmDevices; stepStartTime = Date(); stepElapsed = ""
                 log.info("Step 1/4 — Fetching AxM org devices")
 
@@ -269,23 +281,62 @@ final class SyncEngine: ObservableObject {
                 } else if case .failure = store.axmAuthStatus {
                     log.warn("Step 1/4 — AxM auth previously failed — skipping fetch, proceeding to Jamf.")
                 } else {
-                    do {
-                        rawABM = try await abmService.fetchOrgDevices(
-                            pageSize: pageSize,
-                            onProgress: { [weak self] fetched, total in
-                                guard let self else { return }
-                                self.totalSteps  = max(total, fetched)
-                                self.currentStep = fetched
-                                self.stepLabel   = "Fetching org devices from Apple… \(fetched)/\(max(total, fetched))"
-                                if let s = self.stepStartTime { self.stepElapsed = Self.fmtElapsed(-s.timeIntervalSinceNow) }
+                    // ── Option B: cursor resume ──────────────────────────────
+                    // Check for a saved cursor from a previous interrupted fetch.
+                    // Only resume if the cursor was saved for the current scope —
+                    // never use an ABM cursor for an ASM fetch or vice versa.
+                    let currentScopeRaw = store.axmCredentials.scope.rawValue
+                    let savedCursor: String? = {
+                        guard prefs.axmResumeScope == currentScopeRaw,
+                              let c = prefs.axmResumeCursor, !c.isEmpty else { return nil }
+                        return c
+                    }()
+                    if savedCursor != nil {
+                        log.info("Step 1/4 — Resuming ABM fetch from saved cursor (\(prefs.axmResumedDeviceCount) devices already in cache).")
+                        stepLabel = "Resuming AxM fetch from page \(prefs.axmResumedDeviceCount / 1000 + 1)…"
+                    }
+
+                    // DEBUG: set debugPageLimit > 0 to stop after N devices and test resume.
+                    // Set to 0 (or remove entirely) before releasing to production.
+                    let debugPageLimit = 0   // e.g. 1000 to test resume after 1 page
+
+                    rawABM = await abmService.fetchOrgDevices(
+                        pageSize:       pageSize,
+                        resumeCursor:   savedCursor,
+                        debugPageLimit: debugPageLimit,
+                        batchFlushPages: 10,
+                        onProgress: { [weak self] fetched, total in
+                            guard let self else { return }
+                            self.totalSteps  = max(total, fetched)
+                            self.currentStep = fetched
+                            self.stepLabel   = "Fetching org devices from Apple… \(fetched)/\(max(total, fetched))"
+                            if let s = self.stepStartTime { self.stepElapsed = Self.fmtElapsed(-s.timeIntervalSinceNow) }
+                        },
+                        onBatchReady: { [weak self] batch, nextCursor in
+                            guard let self else { return }
+                            // Save cursor + device count to UserDefaults immediately.
+                            // This runs on MainActor (onBatchReady is @MainActor).
+                            if let cursor = nextCursor {
+                                // More pages remaining — save cursor so next run can resume
+                                prefs.axmResumeCursor       = cursor
+                                prefs.axmResumedDeviceCount += batch.count
+                                prefs.axmResumeScope        = currentScopeRaw
+                                self.log.info("Cursor saved: \(batch.count) devices flushed, \(prefs.axmResumedDeviceCount) total, cursor=\(cursor.prefix(20))…")
+                            } else {
+                                // nil cursor = fetch complete — clear the saved resume state
+                                prefs.clearAxmResumeCursor()
+                                self.log.info("Fetch complete — resume cursor cleared.")
                             }
-                        )
-                        runAxmCount = rawABM.count
+                        }
+                    )
+                    // fetchOrgDevices never throws — it returns partial on failure.
+                    // rawABM will be empty only if credentials were bad or fetch never started.
+                    runAxmCount = rawABM.count
+                    if rawABM.isEmpty && savedCursor == nil {
+                        log.warn("Step 1/4 — AxM fetch returned 0 devices. Check credentials and network.")
+                    } else {
                         let pages = max(1, (rawABM.count + pageSize - 1) / pageSize)
-                        log.info("AxM: fetched \(rawABM.count) devices across \(pages) page(s).")
-                    } catch {
-                        log.error("Step 1/4 — AxM fetch failed: \(error.localizedDescription). Continuing with Jamf fetch.")
-                        rawABM = []   // ensure merge step sees empty, not stale
+                        log.info("AxM: fetched \(rawABM.count) devices across \(pages) page(s) this run.")
                     }
                 }
             }
@@ -415,7 +466,11 @@ final class SyncEngine: ObservableObject {
                 // If AxM cache was fresh (rawABM empty), do NOT update lastAxmSync — the old
                 // timestamp is still correct and must not be reset to now (would make both
                 // timestamps identical and mask the fact that AxM ran earlier than Jamf).
-                if !rawABM.isEmpty    { prefs.lastAxmSync  = Date() }
+                // IMPORTANT: do NOT stamp lastAxmSync if a resume cursor is still saved —
+                // a partial fetch is not complete. axmIsFresh must stay false so the next
+                // run re-enters Phase 1 and continues from the cursor.
+                let axmFetchComplete = !rawABM.isEmpty && prefs.axmResumeCursor == nil
+                if axmFetchComplete { prefs.lastAxmSync  = Date() }
                 if !rawJamf.isEmpty || !rawMobile.isEmpty { prefs.lastJamfSync = Date() }
                 // Persist active scope so relaunch always restores the right ABM/ASM context
                 prefs.activeScope = store.axmCredentials.scope.rawValue
@@ -474,7 +529,16 @@ final class SyncEngine: ObservableObject {
                 && !store.axmCredentials.keyId.isEmpty
                 && !store.axmCredentials.privateKeyContent.isEmpty
 
-            if !axmCredsAvailable {
+            // Gate: if the org device fetch is incomplete (cursor still saved), skip coverage.
+            // Running 3+ hours of coverage API calls on a partial device set is wasteful —
+            // the remaining devices will need coverage anyway once the fetch completes.
+            // Jamf write-back (Step 4) still runs for devices that already have cached coverage.
+            let axmFetchIncomplete = prefs.axmResumeCursor != nil
+
+            if axmFetchIncomplete {
+                let fetchedSoFar = store.devices.filter { $0.deviceSource != .jamfOnly && $0.axmDeviceId != nil }.count
+                log.warn("Step 3/4 — AppleCare coverage API skipped: Apple org devices fetch is incomplete — \(fetchedSoFar) devices fetched so far, remaining pages still pending. Re-sync to fetch the remaining devices from Apple. Coverage will run automatically once all pages are complete.")
+            } else if !axmCredsAvailable {
                 log.warn("Step 3/4 — AxM credentials not configured — skipping coverage fetch.")
             } else if case .failure = store.axmAuthStatus {
                 log.warn("Step 3/4 — AxM auth failed — skipping coverage fetch.")
@@ -533,23 +597,20 @@ final class SyncEngine: ObservableObject {
                         log.info(label)
                     }
 
-                    // ── 5-concurrent coverage fetch ───────────────────────────────
-                    // Apple's ABM/ASM API has no published per-device limit but 429s appear
-                    // above ~5 concurrent. We process targets in chunks of 5, running all 5
-                    // in parallel via TaskGroup, then flush results and update progress before
-                    // the next chunk. This gives ~5× speedup over sequential while staying safe.
-                    //
-                    // Each task returns a CovResult so all CoreData writes happen serially on
-                    // the MainActor (inside recordCoverageResult / upsertDevices) after the
-                    // TaskGroup completes — no concurrent CoreData access.
+                    // ── 3-concurrent coverage fetch (matches v1.0) ───────────────
+                    // 3 tasks run in parallel per chunk via TaskGroup.
+                    // No inter-chunk pause — the 429 retry (15s) handles actual rate limiting.
+                    // Each task receives the shared coverageSession so no per-task TLS handshake
+                    // is needed. On URLError the retry uses a fresh session via the session:
+                    // parameter — same isolation guarantee without the per-device TLS cost.
                     enum CovResult {
-                        case success(Device, DeviceCoverage, Int)   // device, coverage, globalIndex
-                        case skipped(String, Int)                    // serial, globalIndex
+                        case success(Device, DeviceCoverage, Int)
+                        case skipped(String, Int)
                         case authAbort
-                        case rateLimited(Device, Int)               // device, globalIndex — 429 after retry
+                        case rateLimited(Device, Int)
                     }
 
-                    let covConcurrency = 3  // 3 concurrent tasks, each with its own URLSession to avoid shared-connection resets
+                    let covConcurrency = 3
                     let covChunks = stride(from: 0, to: targets.count, by: covConcurrency).map {
                         Array(targets[$0 ..< min($0 + covConcurrency, targets.count)])
                     }
@@ -600,24 +661,20 @@ final class SyncEngine: ObservableObject {
                                     } catch {
                                         let msg = error.localizedDescription.lowercased()
                                         if msg.contains("400") || msg.contains("401") || msg.contains("unauthori") || msg.contains("token") || msg.contains("invalid_client") {
-                                            // Auth failure — clear token and retry once
                                             await abmService.clearToken()
                                             try? await Task.sleep(nanoseconds: 2_000_000_000)
                                             do {
                                                 let cov = try await abmService.fetchCoverage(
-                                                    deviceId: deviceId, serialNumber: device.serialNumber,
-                                                    session: taskSession)
+                                                    deviceId: deviceId, serialNumber: device.serialNumber)
                                                 return .success(device, cov, globalIdx)
                                             } catch {
                                                 return .authAbort
                                             }
                                         } else if msg.contains("429") || msg.contains("rate") {
-                                            // Rate limited — wait 15s and retry once
                                             try? await Task.sleep(nanoseconds: 15_000_000_000)
                                             do {
                                                 let cov = try await abmService.fetchCoverage(
-                                                    deviceId: deviceId, serialNumber: device.serialNumber,
-                                                    session: taskSession)
+                                                    deviceId: deviceId, serialNumber: device.serialNumber)
                                                 return .success(device, cov, globalIdx)
                                             } catch {
                                                 return .rateLimited(device, globalIdx)
@@ -634,9 +691,8 @@ final class SyncEngine: ObservableObject {
                             return results
                         }
 
-                        // ── Process chunk results serially on MainActor ───────────────
+                        // Process chunk results serially on MainActor
                         for result in chunkResults.sorted(by: {
-                            // sort by globalIdx so log lines appear in order
                             if case .success(_, _, let a) = $0, case .success(_, _, let b) = $1 { return a < b }
                             return false
                         }) {
@@ -650,14 +706,12 @@ final class SyncEngine: ObservableObject {
                                     let remaining = rate * Double(targets.count - idx - 1)
                                     let remMins   = Int(remaining) / 60
                                     let remSecs   = Int(remaining) % 60
-                                    // Step ETA = remaining for THIS step only
                                     etaStr = remMins > 0 ? "~\(remMins)m \(remSecs)s remaining" : "~\(remSecs)s remaining"
-                                    // Total ETA = step remaining (coverage is the longest step)
                                     let totalSecs = Int(remaining)
                                     let th = totalSecs / 3600; let tm = (totalSecs % 3600) / 60
                                     totalETA = th > 0 ? "~\(th)h \(tm)m total" : "~\(tm)m total"
                                 } else { etaStr = ""; totalETA = "" }
-                                stepETA = etaStr
+                                stepETA   = etaStr
                                 stepLabel = "Fetching Apple Coverage [\(idx+1)/\(targets.count)] \(device.serialNumber)" +
                                             (etaStr.isEmpty ? "" : " — \(etaStr)")
                                 recordCoverageResult(coverage, for: device,
@@ -790,7 +844,11 @@ final class SyncEngine: ObservableObject {
                 // 8 in-flight requests so we don't overwhelm on-premise Jamf servers.
                 // A single OAuth token is fetched once up-front and reused by all tasks.
                 // An auth failure in any task cancels the whole group (fail-fast).
-                let concurrency = 8
+                // 5 concurrent PATCH tasks — reduced from 8 to avoid connection pool exhaustion.
+                // With 8 tasks sharing Jamf Cloud's keep-alive connections, the load balancer
+                // closes idle connections mid-flight causing -999 NSURLErrorCancelled errors.
+                // 5 stays well within Jamf's recommended concurrency while avoiding this.
+                let concurrency = 5
                 // Pre-fetch token ONCE so all parallel tasks reuse it without each
                 // calling validToken() — Jamf TTL is only 59s, 8 concurrent actor
                 // calls would each see an expired token and all fetch fresh ones.
@@ -825,7 +883,9 @@ final class SyncEngine: ObservableObject {
                                 guard let jamfId = device.jamfId else {
                                     return .skipped(device, "No Jamf ID")
                                 }
-                                do {
+                                // Inner helper — attempt one PATCH, return the WBResult.
+                                // Extracted so we can call it twice (initial + -999 retry).
+                                func attempt() async throws {
                                     if device.isMobile {
                                         try await jamfService.writeWarrantyBackMobile(
                                             mobileDeviceId: jamfId,
@@ -843,7 +903,22 @@ final class SyncEngine: ObservableObject {
                                             token:        sharedJamfToken
                                         )
                                     }
+                                }
+                                do {
+                                    try await attempt()
                                     return .synced(device)
+                                } catch let error as NSError where error.code == NSURLErrorCancelled {
+                                    // -999 NSURLErrorCancelled: Jamf Cloud's load balancer closed
+                                    // a shared keep-alive connection mid-flight. Not an auth failure —
+                                    // safe to retry once after a short pause.
+                                    await LogService.shared.debug("WB -999 cancelled for \(device.serialNumber) — retrying after 500ms")
+                                    try await Task.sleep(nanoseconds: 500_000_000)
+                                    do {
+                                        try await attempt()
+                                        return .synced(device)
+                                    } catch {
+                                        return .failed(device, "Cancelled (retry failed): \(error.localizedDescription)")
+                                    }
                                 } catch {
                                     let msg = error.localizedDescription.lowercased()
                                     if msg.contains("401") || msg.contains("unauthori") || msg.contains("token") {
@@ -1037,6 +1112,47 @@ final class SyncEngine: ObservableObject {
             log.info(stepLabel)
             store.recomputeStats()
 
+            // ── Run Summary ──────────────────────────────────────────────────
+            let endTime   = Date()
+            let elapsedH  = elapsed / 3600
+            let elapsedM  = (elapsed % 3600) / 60
+            let elapsedS  = elapsed % 60
+            let elapsedFmt = elapsedH > 0
+                ? "\(elapsedH)h \(elapsedM)m \(elapsedS)s"
+                : elapsedM > 0 ? "\(elapsedM)m \(elapsedS)s" : "\(elapsedS)s"
+            let axmLine   = runAxmCount  > 0 ? "\(runAxmCount)" : "from cache"
+            let jamfLine  = runJamfCount > 0 ? "\(runJamfCount)" : "from cache"
+            let covActive = store.stats.coverageActive
+            let covNone   = store.stats.coverageNoPlan
+            let covInact  = store.stats.coverageInactive
+            log.info("═══════════════════════════════════════════════")
+            log.info("  SYNC SUMMARY")
+            log.info("═══════════════════════════════════════════════")
+            log.info("  Started             : \(df.string(from: runStart))")
+            log.info("  Ended               : \(df.string(from: endTime))")
+            log.info("  Total time          : \(elapsedFmt)")
+            log.info("  ───────────────────────────────────────────")
+            log.info("  AxM devices         : \(axmLine)")
+            log.info("  Jamf devices        : \(jamfLine)")
+            log.info("  Total in cache      : \(store.devices.count)")
+            log.info("  ───────────────────────────────────────────")
+            log.info("  Coverage fetched    : \(runCoverageCount)")
+            log.info("  Coverage active     : \(covActive)")
+            log.info("  Coverage inactive   : \(covInact)")
+            log.info("  No coverage         : \(covNone)")
+            log.info("  ───────────────────────────────────────────")
+            log.info("  Jamf write-back     : \(runWBSynced) synced / \(runWBFailed) failed")
+            if (runWBSyncedMac + runWBFailedMac) > 0 {
+                log.info("    Mac               : \(runWBSyncedMac) synced / \(runWBFailedMac) failed")
+            }
+            if (runWBSyncedMob + runWBFailedMob) > 0 {
+                log.info("    Mobile            : \(runWBSyncedMob) synced / \(runWBFailedMob) failed")
+            }
+            if prefs.axmResumeCursor != nil {
+                log.warn("  AxM fetch incomplete: cursor saved — re-sync to fetch remaining devices")
+            }
+            log.info("═══════════════════════════════════════════════")
+
         } catch is CancellationError {
             phase     = .idle
             stepLabel = "Stopped."
@@ -1107,7 +1223,9 @@ final class SyncEngine: ObservableObject {
                 }.value
                 await store.upsertDevices(partial.map { $0.toDevice() })
                 await store.loadDevicesFromCoreDataSync()
-                if !rawABM.isEmpty    { prefs.lastAxmSync  = Date() }
+                // Only stamp lastAxmSync if no resume cursor is pending — a partial
+                // fetch must not mark the cache as fresh.
+                if !rawABM.isEmpty && prefs.axmResumeCursor == nil { prefs.lastAxmSync  = Date() }
                 if !rawJamf.isEmpty || !rawMobile.isEmpty { prefs.lastJamfSync = Date() }
                 prefs.activeScope = store.axmCredentials.scope.rawValue
                 prefs.dataCachedScope = store.axmCredentials.scope.rawValue

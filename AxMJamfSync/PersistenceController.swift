@@ -10,6 +10,7 @@
 
 import CoreData
 import Foundation
+import os
 import SQLite3
 
 final class PersistenceController: Sendable {
@@ -57,7 +58,7 @@ final class PersistenceController: Sendable {
                 URL(fileURLWithPath: "/dev/null")
         } else {
             guard let description = container.persistentStoreDescriptions.first else {
-                print("[CoreData] FATAL: no persistent store description found")
+                os_log(.fault, "[CoreData] FATAL: no persistent store description found")
                 return
             }
             // NSPersistentHistoryTrackingKey must stay ON because the store has already
@@ -81,7 +82,7 @@ final class PersistenceController: Sendable {
         // or migration failures should show an error, not a crash).
         container.loadPersistentStores { desc, error in
             if let error {
-                print("[CoreData] FATAL: failed to load store at \(desc.url?.path ?? "?") — \(error.localizedDescription)")
+                os_log(.fault, "[CoreData] FATAL: failed to load store — %{public}@", error.localizedDescription)
                 // Post notification so AppStore/UI can show an alert rather than crash
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(
@@ -113,9 +114,9 @@ final class PersistenceController: Sendable {
         bgCtx.perform {
             do {
                 try bgCtx.execute(purgeReq)
-                print("[CoreData] Persistent history purged (transactions before \(yesterday)).")
+                os_log(.default, "[CoreData] Persistent history purged.")
             } catch {
-                print("[CoreData] History purge error: \(error)")
+                os_log(.error, "[CoreData] History purge error: %{public}@", error.localizedDescription)
             }
         }
     }
@@ -128,13 +129,13 @@ final class PersistenceController: Sendable {
         let ctx = container.viewContext
         guard ctx.hasChanges else { return }
         do   { try ctx.save() }
-        catch { print("[CoreData] view-context save error: \(error)") }
+        catch { os_log(.error, "[CoreData] view-context save error: %{public}@", error.localizedDescription) }
     }
 
     func save(_ ctx: NSManagedObjectContext) {
         guard ctx.hasChanges else { return }
         do   { try ctx.save() }
-        catch { print("[CoreData] background-context save error: \(error)") }
+        catch { os_log(.error, "[CoreData] background-context save error: %{public}@", error.localizedDescription) }
     }
 
     // MARK: - Batch delete (cache wipe)
@@ -157,20 +158,39 @@ final class PersistenceController: Sendable {
                     fromRemoteContextSave: [NSDeletedObjectsKey: ids],
                     into: [viewCtx])
             } catch {
-                print("[CoreData] batch delete error: \(error)")
+                os_log(.error, "[CoreData] batch delete error: %{public}@", error.localizedDescription)
             }
         }
 
         // VACUUM reclaims freed SQLite pages so the .sqlite file actually shrinks.
         // NSBatchDeleteRequest removes rows but SQLite keeps the pages in its free list.
-        // We use a direct SQLite connection — the only safe way to VACUUM in a sandboxed app.
-        // NSPersistentStoreRequest is abstract and cannot be executed directly.
-        if let storeURL = container.persistentStoreCoordinator.persistentStores.first?.url {
-            var db: OpaquePointer?
-            if sqlite3_open(storeURL.path, &db) == SQLITE_OK {
-                sqlite3_exec(db, "VACUUM;", nil, nil, nil)
-                sqlite3_close(db)
-                print("[CoreData] VACUUM complete — SQLite file reclaimed freed pages.")
+        //
+        // Safety: VACUUM requires exclusive access to the SQLite file. Opening a raw
+        // sqlite3 connection while CoreData's coordinator holds the store is a race.
+        // Fix: remove the persistent store from the coordinator before VACUUM, then
+        // re-add it. CoreData flushes the WAL and releases its file lock on remove().
+        let coordinator = container.persistentStoreCoordinator
+        if let store = coordinator.persistentStores.first,
+           let storeURL = store.url {
+            do {
+                try coordinator.remove(store)
+                var db: OpaquePointer?
+                if sqlite3_open(storeURL.path, &db) == SQLITE_OK {
+                    sqlite3_exec(db, "VACUUM;", nil, nil, nil)
+                    sqlite3_close(db)
+                    os_log(.default, "[CoreData] VACUUM complete.")
+                }
+                // Re-add the store with the same configuration
+                let type = NSSQLiteStoreType
+                let options: [String: Any] = [
+                    NSPersistentHistoryTrackingKey: true as NSNumber,
+                    NSPersistentStoreRemoteChangeNotificationPostOptionKey: true as NSNumber,
+                    NSMigratePersistentStoresAutomaticallyOption: true,
+                    NSInferMappingModelAutomaticallyOption: true,
+                ]
+                try coordinator.addPersistentStore(ofType: type, configurationName: nil, at: storeURL, options: options)
+            } catch {
+                os_log(.error, "[CoreData] VACUUM store cycle error: %{public}@", error.localizedDescription)
             }
         }
     }
