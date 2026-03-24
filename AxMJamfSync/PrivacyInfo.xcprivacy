@@ -36,6 +36,17 @@
 				<string>C617.1</string>
 			</array>
 		</dict>
+		<!-- Disk space: CoreData's SQLite store checks available disk space before
+		     writing. No disk space data is collected or transmitted. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- E174.1: Access disk space to manage the app's own data -->
+				<string>E174.1</string>
+			</array>
+		</dict>
 	</array>
 
 	<!-- Data collected: none -->

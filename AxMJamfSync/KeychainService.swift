@@ -18,7 +18,7 @@ import Security
 enum KeychainService {
 
     // Service name = bundle ID — makes items unique to this app in the Keychain.
-    private static let service = "com.karthikmac.axmjamfsync"
+    private static let service = Bundle.main.bundleIdentifier ?? "com.karthikmac.axmjamfsync"
 
     // MARK: - Key enum — one case per secret
     enum Key: String {
@@ -56,10 +56,15 @@ enum KeychainService {
     static func save(_ value: String, for key: Key) -> Bool {
         guard let data = value.data(using: .utf8) else { return false }
         let query: [String: Any] = [
-            kSecClass               as String: kSecClassGenericPassword,
-            kSecAttrService         as String: service,
-            kSecAttrAccount         as String: key.rawValue,
-            kSecAttrSynchronizable  as String: false,  // never sync to iCloud Keychain
+            kSecClass                       as String: kSecClassGenericPassword,
+            kSecAttrService                 as String: service,
+            kSecAttrAccount                 as String: key.rawValue,
+            kSecAttrSynchronizable          as String: false,  // never sync to iCloud Keychain
+            // TN3137: explicitly target the data protection keychain (not file-based).
+            // On macOS, SecItem defaults to the file-based keychain without this flag.
+            // The data protection keychain is more secure, consistent with iOS, and
+            // recommended by Apple for all new macOS apps.
+            kSecUseDataProtectionKeychain   as String: true,
         ]
         let attrs: [String: Any] = [kSecValueData as String: data]
         let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
@@ -78,7 +83,27 @@ enum KeychainService {
 
     // MARK: - Load
     static func load(for key: Key) -> String? {
-        let query: [String: Any] = [
+        // Primary: data protection keychain (modern, recommended by Apple TN3137)
+        let dpQuery: [String: Any] = [
+            kSecClass                     as String: kSecClassGenericPassword,
+            kSecAttrService               as String: service,
+            kSecAttrAccount               as String: key.rawValue,
+            kSecAttrSynchronizable        as String: false,
+            kSecReturnData                as String: true,
+            kSecMatchLimit                as String: kSecMatchLimitOne,
+            kSecUseDataProtectionKeychain as String: true,
+        ]
+        var result: AnyObject?
+        if SecItemCopyMatching(dpQuery as CFDictionary, &result) == errSecSuccess,
+           let data = result as? Data,
+           let value = String(data: data, encoding: .utf8) {
+            return value
+        }
+
+        // Migration: item not in data protection keychain — check legacy file-based keychain.
+        // This runs once after upgrading from a build that lacked kSecUseDataProtectionKeychain.
+        // If found, migrate it to the data protection keychain and delete the legacy copy.
+        let legacyQuery: [String: Any] = [
             kSecClass              as String: kSecClassGenericPassword,
             kSecAttrService        as String: service,
             kSecAttrAccount        as String: key.rawValue,
@@ -86,20 +111,33 @@ enum KeychainService {
             kSecReturnData         as String: true,
             kSecMatchLimit         as String: kSecMatchLimitOne,
         ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        var legacyResult: AnyObject?
+        guard SecItemCopyMatching(legacyQuery as CFDictionary, &legacyResult) == errSecSuccess,
+              let legacyData = legacyResult as? Data,
+              let legacyValue = String(data: legacyData, encoding: .utf8) else { return nil }
+
+        // Migrate: write to data protection keychain, then delete legacy copy
+        if save(legacyValue, for: key) {
+            let deleteQuery: [String: Any] = [
+                kSecClass              as String: kSecClassGenericPassword,
+                kSecAttrService        as String: service,
+                kSecAttrAccount        as String: key.rawValue,
+                kSecAttrSynchronizable as String: false,
+            ]
+            SecItemDelete(deleteQuery as CFDictionary)
+        }
+        return legacyValue
     }
 
     // MARK: - Delete
     @discardableResult
     static func delete(for key: Key) -> Bool {
         let query: [String: Any] = [
-            kSecClass              as String: kSecClassGenericPassword,
-            kSecAttrService        as String: service,
-            kSecAttrAccount        as String: key.rawValue,
-            kSecAttrSynchronizable as String: false,
+            kSecClass                     as String: kSecClassGenericPassword,
+            kSecAttrService               as String: service,
+            kSecAttrAccount               as String: key.rawValue,
+            kSecAttrSynchronizable        as String: false,
+            kSecUseDataProtectionKeychain as String: true,
         ]
         return SecItemDelete(query as CFDictionary) == errSecSuccess
     }
@@ -149,8 +187,8 @@ enum KeychainService {
         Task { @MainActor in
             let log = LogService.shared
             log.debug("[Keychain] \(scopeLabel) credentials — " +
-                "clientId: \(hasClientId ? c.clientId.prefix(8) + "…" : "⚠ MISSING") | " +
-                "keyId: \(hasKeyId ? c.keyId.prefix(8) + "…" : "⚠ MISSING") | " +
+                "clientId: \(hasClientId ? "✓" : "⚠ MISSING") | " +
+                "keyId: \(hasKeyId ? "✓" : "⚠ MISSING") | " +
                 "privateKey: \(hasPrivKey ? "\(c.privateKeyContent.count) chars" : "⚠ MISSING")")
             if !allPresent {
                 log.warn("[Keychain] \(scopeLabel) credentials incomplete — sync will fail. Configure in Setup.")
@@ -171,9 +209,9 @@ enum KeychainService {
             let hasJamfClient = !j.clientId.isEmpty
             let hasJamfSecret = !j.clientSecret.isEmpty
             log.debug("[Keychain] Jamf credentials — " +
-                "url: \(hasJamfURL ? j.url : "⚠ MISSING") | " +
-                "clientId: \(hasJamfClient ? j.clientId.prefix(8) + "…" : "⚠ MISSING") | " +
-                "clientSecret: \(hasJamfSecret ? "present" : "⚠ MISSING")")
+                "url: \(hasJamfURL ? "✓" : "⚠ MISSING") | " +
+                "clientId: \(hasJamfClient ? "✓" : "⚠ MISSING") | " +
+                "clientSecret: \(hasJamfSecret ? "✓" : "⚠ MISSING")")
             if !hasJamfURL || !hasJamfClient || !hasJamfSecret {
                 log.warn("[Keychain] Jamf credentials incomplete — Jamf steps will be skipped.")
             }

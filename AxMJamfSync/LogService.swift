@@ -9,6 +9,7 @@
 // Session header written by clearSession() at start of each sync run.
 
 import Foundation
+import os
 import SwiftUI
 
 // MARK: - LogEntry
@@ -180,7 +181,7 @@ final class LogService: ObservableObject {
         try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: logURL.path)
         openFileHandle()
 
-        print("[LogService] Rotated sync.log → sync.1.log (was \(size / 1_024) KB). Keeping last \(maxArchivedLogs) archives.")
+        os_log(.default, "[LogService] Rotated sync.log (was %d KB).", size / 1_024)
     }
 
     // MARK: - Private helpers

@@ -235,6 +235,13 @@ actor JamfService {
         cfg.timeoutIntervalForResource = 180
         cfg.waitsForConnectivity       = true
         cfg.requestCachePolicy         = .reloadIgnoringLocalCacheData
+        // Allow up to 8 concurrent connections to the Jamf host — one per concurrent PATCH task.
+        // Default is 6 (HTTP/1.1) which causes tasks to share connections and hit -999 cancellations
+        // when Jamf Cloud's load balancer closes a shared keep-alive connection mid-flight.
+        cfg.httpMaximumConnectionsPerHost = 8
+        // Disable HTTP pipelining — Jamf Pro does not reliably support pipelined requests,
+        // and pipelining on a shared connection is a second cause of -999 cancellations.
+        cfg.httpShouldUsePipelining = false
         return URLSession(configuration: cfg, delegate: TLSDelegate(), delegateQueue: nil)
     }()
 
@@ -289,7 +296,7 @@ actor JamfService {
 
             var request = URLRequest(url: components.url!)
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("AxMJamfSync/1.0", forHTTPHeaderField: "User-Agent")
+            request.setValue((Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "AxMJamfSync/\($0)" } ?? "AxMJamfSync/1.1", forHTTPHeaderField: "User-Agent")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
 
             let (data, response) = try await session.data(for: request)
@@ -430,7 +437,7 @@ actor JamfService {
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("Bearer \(resolvedToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("AxMJamfSync/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue((Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "AxMJamfSync/\($0)" } ?? "AxMJamfSync/1.1", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody   = try JSONSerialization.data(withJSONObject: ["purchasing": purchasing])
@@ -476,7 +483,7 @@ actor JamfService {
 
             var request = URLRequest(url: components.url!)
             request.setValue("Bearer \(mobileToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("AxMJamfSync/1.0", forHTTPHeaderField: "User-Agent")
+            request.setValue((Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "AxMJamfSync/\($0)" } ?? "AxMJamfSync/1.1", forHTTPHeaderField: "User-Agent")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
 
             let (data, response) = try await session.data(for: request)
@@ -611,7 +618,7 @@ actor JamfService {
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("Bearer \(resolvedToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("AxMJamfSync/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue((Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "AxMJamfSync/\($0)" } ?? "AxMJamfSync/1.1", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["ios": ["purchasing": purchasing]])
@@ -663,7 +670,7 @@ actor JamfService {
             var req = URLRequest(url: revokeURL)
             req.httpMethod = "POST"
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue("AxMJamfSync/1.0", forHTTPHeaderField: "User-Agent")
+            req.setValue((Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "AxMJamfSync/\($0)" } ?? "AxMJamfSync/1.1", forHTTPHeaderField: "User-Agent")
             req.timeoutInterval = 10
             _ = try? await session.data(for: req)
         }

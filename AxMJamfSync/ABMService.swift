@@ -127,14 +127,27 @@ actor ABMService {
 
     // MARK: URLSession
     // One session for token + org-device fetches (fast, parallel-safe)
-    private let session: URLSession = {
+    // `var` so it can be recreated after an HTTP/2 -1005 connection reset mid-fetch.
+    private var session: URLSession = {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest  = 30
-        cfg.timeoutIntervalForResource = 120
+        cfg.timeoutIntervalForResource = 600  // 10-min budget per request — large pages can take >2s
         cfg.waitsForConnectivity       = true
         cfg.requestCachePolicy         = .reloadIgnoringLocalCacheData
         return URLSession(configuration: cfg, delegate: TLSDelegate(), delegateQueue: nil)
     }()
+
+    /// Recreate the org-device URL session after a -1005 HTTP/2 connection reset.
+    /// Apple's API server closes the HTTP/2 connection after ~20 pages (~20k devices);
+    /// a fresh session opens a new TCP connection for the retry.
+    private func resetOrgDeviceSession() {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest  = 30
+        cfg.timeoutIntervalForResource = 600
+        cfg.waitsForConnectivity       = true
+        cfg.requestCachePolicy         = .reloadIgnoringLocalCacheData
+        session = URLSession(configuration: cfg, delegate: TLSDelegate(), delegateQueue: nil)
+    }
 
     // Dedicated session for AppleCare coverage requests.
     // httpMaximumConnectionsPerHost = 1 forces all requests through a single
@@ -180,31 +193,60 @@ actor ABMService {
     // MARK: - Public: fetch all org devices (paginated)
 
     /// Mirrors device_sync.py → sync_axm_devices → _paginate_axm(…/v1/orgDevices)
+    ///
+    /// Option B — Cursor resume + partial dump:
+    ///   - onBatchReady fires every `batchFlushPages` pages with accumulated devices + current
+    ///     cursor. SyncEngine saves them to CoreData immediately and persists the cursor to
+    ///     UserDefaults. On next run SyncEngine passes a resumeCursor to start from that point.
+    ///   - If all retries fail, returns whatever was collected so far (partial results) rather
+    ///     than throwing — cursor was already saved by the last onBatchReady call so resume works.
+    ///   - debugPageLimit: DEBUG ONLY — set to a non-zero value to stop after N devices to test
+    ///     cursor resume. Remove / set to 0 in production.
     func fetchOrgDevices(
-        pageSize: Int = 1000,
-        onProgress: @MainActor (Int, Int) -> Void
-    ) async throws -> [RawABMDevice] {
+        pageSize:        Int = 1000,
+        resumeCursor:    String? = nil,
+        debugPageLimit:  Int = 0,          // DEBUG: stop after this many devices (0 = no limit)
+        batchFlushPages: Int = 10,         // flush to CoreData + save cursor every N pages
+        onProgress:      @MainActor (Int, Int) -> Void,
+        onBatchReady:    @MainActor ([RawABMDevice], String?) -> Void  // (batch, nextCursor)
+    ) async -> [RawABMDevice] {            // returns partial on failure — never throws
 
-        let token     = try await validToken()
         var results:  [RawABMDevice] = []
-        var cursor:   String? = nil
-        // Apple's org device API supports up to 1000 per page (documented limit).
-        // We always use 1000 — the pageSize parameter is Jamf-only.
+        // Start from a saved cursor if resuming, otherwise nil = start from page 1
+        var cursor:   String? = resumeCursor
         let limit     = 1000
+        let decoder   = JSONDecoder()
+        let encoder   = JSONEncoder()
+        let scopeLabel = scope == .school ? "ASM" : "ABM"
+        var pageCount = 0   // pages fetched this run (for batch flush trigger)
+        var batchAccumulator: [RawABMDevice] = []  // devices since last flush
 
-        // P5: Hoist encoder/decoder outside the loop — JSONEncoder/Decoder initialisation
-        // is moderately expensive. Previously allocated per-page (decoder) and per-record
-        // (encoder). At 50k devices = 50k encoder + 50 decoder allocs eliminated.
-        let decoder = JSONDecoder()
-        let encoder = JSONEncoder()
-
+        if let rc = resumeCursor {
+            await LogService.shared.info("[\(scopeLabel)] Resuming org device fetch from saved cursor (\(rc.prefix(20))…)")
+        }
         await onProgress(0, 0)
 
         repeat {
-            try Task.checkCancellation()
+            // Cancellation check — honour Stop Sync between pages
+            guard !(Task.isCancelled) else {
+                await LogService.shared.info("[\(scopeLabel)] Fetch cancelled — flushing \(batchAccumulator.count) buffered device(s).")
+                if !batchAccumulator.isEmpty {
+                    await onBatchReady(batchAccumulator, cursor)
+                }
+                return results
+            }
+
+            // Fix B: per-page token refresh
+            guard let token = try? await validToken() else {
+                await LogService.shared.error("[\(scopeLabel)] Token unavailable — stopping fetch with \(results.count) devices collected.")
+                if !batchAccumulator.isEmpty { await onBatchReady(batchAccumulator, cursor) }
+                return results
+            }
 
             guard var components = URLComponents(string: baseURL + "/v1/orgDevices") else {
-                throw ABMError.networkError("Could not build /v1/orgDevices URL from baseURL: \(baseURL)")
+                await LogService.shared.error("[\(scopeLabel)] Could not build /v1/orgDevices URL.")
+                if !batchAccumulator.isEmpty { await onBatchReady(batchAccumulator, cursor) }
+                return results
             }
             var queryItems: [URLQueryItem] = [
                 URLQueryItem(name: "limit", value: String(limit)),
@@ -213,26 +255,78 @@ actor ABMService {
             components.queryItems = queryItems
 
             guard let orgDevicesURL = components.url else {
-                throw ABMError.networkError("URLComponents produced nil URL for /v1/orgDevices")
+                await LogService.shared.error("[\(scopeLabel)] URLComponents produced nil URL.")
+                if !batchAccumulator.isEmpty { await onBatchReady(batchAccumulator, cursor) }
+                return results
             }
             var request = URLRequest(url: orgDevicesURL)
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.setValue("AxMJamfSync/1.0", forHTTPHeaderField: "User-Agent")
+            request.setValue((Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "AxMJamfSync/\($0)" } ?? "AxMJamfSync/1.1", forHTTPHeaderField: "User-Agent")
 
-            let (data, response) = try await session.data(for: request)
-            try await validateHTTP(response, data: data, context: "ABM /v1/orgDevices page \((results.count / 1000) + 1)")
+            let pageNum = (results.count / 1000) + 1
 
-            let decoded = try decoder.decode(ABMDeviceListResponse.self, from: data)
+            // ── Fetch with -1005 escalating retry ────────────────────────────
+            // Apple closes the HTTP/2 connection after ~20 pages. Two retries with
+            // escalating backoff handle both the normal GOAWAY and rate-limit cases.
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await session.data(for: request)
+            } catch let urlErr as URLError where urlErr.code == .networkConnectionLost
+                                               || urlErr.code.rawValue == -1005 {
+                // Attempt 1 — 5s
+                await LogService.shared.warn("[\(scopeLabel)] /v1/orgDevices page \(pageNum): -1005 connection reset — recreating session, waiting 5s, retry 1/2…")
+                resetOrgDeviceSession()
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                do {
+                    (data, response) = try await session.data(for: request)
+                } catch let retryErr as URLError where retryErr.code == .networkConnectionLost
+                                                    || retryErr.code.rawValue == -1005 {
+                    // Attempt 2 — 10s
+                    await LogService.shared.warn("[\(scopeLabel)] /v1/orgDevices page \(pageNum): retry 1 failed — waiting 10s, retry 2/2…")
+                    resetOrgDeviceSession()
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                    do {
+                        (data, response) = try await session.data(for: request)
+                    } catch {
+                        // All retries exhausted — flush what we have, save cursor, return partial
+                        await LogService.shared.error("[\(scopeLabel)] /v1/orgDevices page \(pageNum): all retries failed (\(error.localizedDescription)). Flushing \(results.count + batchAccumulator.count) devices and saving cursor for resume.")
+                        if !batchAccumulator.isEmpty { await onBatchReady(batchAccumulator, cursor) }
+                        return results
+                    }
+                } catch {
+                    // Retry 1 threw a non -1005 error — flush and return partial
+                    await LogService.shared.error("[\(scopeLabel)] /v1/orgDevices page \(pageNum): retry 1 non-URL error (\(error.localizedDescription)). Flushing \(results.count + batchAccumulator.count) devices.")
+                    if !batchAccumulator.isEmpty { await onBatchReady(batchAccumulator, cursor) }
+                    return results
+                }
+            } catch {
+                // Non -1005 error (e.g. 401, timeout) — flush and return partial
+                await LogService.shared.error("[\(scopeLabel)] /v1/orgDevices page \(pageNum): unexpected error (\(error.localizedDescription)). Flushing \(results.count + batchAccumulator.count) devices and saving cursor for resume.")
+                if !batchAccumulator.isEmpty { await onBatchReady(batchAccumulator, cursor) }
+                return results
+            }
+
+            // Validate HTTP status — if Apple returns 400/410 on a stale cursor,
+            // the defensive fallback clears the cursor and the caller restarts from page 1.
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                await LogService.shared.error("[\(scopeLabel)] /v1/orgDevices page \(pageNum): HTTP \(http.statusCode) — cursor may be stale. Flushing \(results.count + batchAccumulator.count) devices.")
+                if !batchAccumulator.isEmpty { await onBatchReady(batchAccumulator, cursor) }
+                return results
+            }
+
+            guard let decoded = try? decoder.decode(ABMDeviceListResponse.self, from: data) else {
+                await LogService.shared.error("[\(scopeLabel)] /v1/orgDevices page \(pageNum): JSON decode failed. Returning \(results.count) devices.")
+                if !batchAccumulator.isEmpty { await onBatchReady(batchAccumulator, cursor) }
+                return results
+            }
 
             for record in decoded.data {
                 let serial = (record.attributes.serialNumber ?? "").uppercased().trimmingCharacters(in: .whitespaces)
                 guard !serial.isEmpty else { continue }
-                // Encode this single record back to JSON for storage.
-                // This is cheap — we already have `data` in memory; re-encoding one record
-                // avoids storing the entire page blob (which may contain 1000 devices).
                 let recordJson = try? encoder.encode(record)
-                results.append(RawABMDevice(
+                let device = RawABMDevice(
                     deviceId:           record.id,
                     serialNumber:       serial,
                     deviceStatus:       record.attributes.deviceStatus ?? "ACTIVE",
@@ -242,16 +336,46 @@ actor ABMService {
                     deviceClass:        record.attributes.deviceClass,
                     productFamily:      record.attributes.productFamily,
                     rawJson:            recordJson
-                ))
+                )
+                results.append(device)
+                batchAccumulator.append(device)
             }
 
-            // Cursor lives at: body.meta.paging.nextCursor
             cursor = decoded.meta?.paging?.nextCursor
+            pageCount += 1
 
-            let knownTotal = max(results.count, 0)
-            await onProgress(results.count, knownTotal)
+            await onProgress(results.count, results.count)
+
+            // ── Flush batch every N pages ────────────────────────────────────
+            // Saves devices to CoreData + persists cursor to UserDefaults so any
+            // failure after this point can resume from the next cursor.
+            if pageCount % batchFlushPages == 0 {
+                await LogService.shared.info("[\(scopeLabel)] Batch flush: \(batchAccumulator.count) devices (total \(results.count)) — cursor saved for resume.")
+                await onBatchReady(batchAccumulator, cursor)
+                batchAccumulator.removeAll()
+            }
+
+            // ── DEBUG page limit ─────────────────────────────────────────────
+            // Set debugPageLimit > 0 to stop early and test cursor resume.
+            // REMOVE or leave as 0 in production.
+            if debugPageLimit > 0 && results.count >= debugPageLimit {
+                await LogService.shared.info("[\(scopeLabel)] DEBUG: debugPageLimit \(debugPageLimit) reached at \(results.count) devices — stopping to test cursor resume. cursor=\(cursor?.prefix(30) ?? "nil")")
+                if !batchAccumulator.isEmpty { await onBatchReady(batchAccumulator, cursor) }
+                return results
+            }
 
         } while cursor != nil
+
+        // ── Full fetch complete ──────────────────────────────────────────────
+        // Flush any remaining devices in the accumulator, then signal completion
+        // with cursor=nil so SyncEngine clears the saved resume cursor.
+        if !batchAccumulator.isEmpty {
+            await LogService.shared.info("[\(scopeLabel)] Final flush: \(batchAccumulator.count) device(s) (total \(results.count)).")
+            await onBatchReady(batchAccumulator, nil)  // nil cursor = fetch complete
+        } else {
+            // No leftover batch — still signal completion so cursor gets cleared
+            await onBatchReady([], nil)
+        }
 
         return results
     }
@@ -270,8 +394,7 @@ actor ABMService {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("AxMJamfSync/1.0", forHTTPHeaderField: "User-Agent")
-
+        request.setValue((Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "AxMJamfSync/\($0)" } ?? "AxMJamfSync/1.1", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await (session ?? coverageSession).data(for: request)
 
         // 404 = no AppleCare plan on file — not an error (Python handles this the same way)
@@ -359,7 +482,7 @@ actor ABMService {
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("AxMJamfSync/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue((Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "AxMJamfSync/\($0)" } ?? "AxMJamfSync/1.1", forHTTPHeaderField: "User-Agent")
 
         // Form body matches apple_oauth.py → _request_new_token() exactly
         func pct(_ s: String) -> String {

@@ -234,6 +234,11 @@ struct SyncProgressBlock: View {
                 timer?.invalidate(); timer = nil
             }
         }
+        .onDisappear {
+            // Safety: if the view is removed while a sync is running (tab switch),
+            // invalidate the timer so it does not fire against a deallocated @State.
+            timer?.invalidate(); timer = nil
+        }
     }
 
     @ViewBuilder private var phaseIconView: some View {

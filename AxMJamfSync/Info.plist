@@ -9,9 +9,9 @@
 	<key>CFBundleDisplayName</key>
 	<string>AxM Jamf Sync</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleExecutable</key>
@@ -33,6 +33,9 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
 	</dict>
+	<!-- App Store category — required to avoid "No App Category is set" warning -->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.business</string>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>AxM Jamf Sync sends a notification when a sync run completes or fails.</string>
 </dict>

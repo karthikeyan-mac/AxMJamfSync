@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A022 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A023 /* PrivacyInfo.xcprivacy */; };
 		B001 /* AxMJamfSyncApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001 /* AxMJamfSyncApp.swift */; };
 		B002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A002 /* Models.swift */; };
 		B003 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A003 /* AppStore.swift */; };
@@ -27,7 +26,8 @@
 		B017 /* JamfService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A019 /* JamfService.swift */; };
 		B018 /* SyncNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A020 /* SyncNotificationService.swift */; };
 		B019 /* TLSDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A021 /* TLSDelegate.swift */; };
-		CEFCAF082F6473A10006190D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEFCAF072F6473A10006190D /* Assets.xcassets */; };
+		CEC1B53D2F5CB1AF00566E8D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */; };
+		A022 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A023 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,8 +53,8 @@
 		A020 /* SyncNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncNotificationService.swift; sourceTree = "<group>"; };
 		A021 /* TLSDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSDelegate.swift; sourceTree = "<group>"; };
 		A023 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		CEFCAF072F6473A10006190D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		PROD /* AxMJamfSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = AxMJamfSync.app; path = "AxM Jamf Sync.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		PROD /* AxMJamfSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AxMJamfSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -109,7 +109,7 @@
 				A019 /* JamfService.swift */,
 				A020 /* SyncNotificationService.swift */,
 				A021 /* TLSDelegate.swift */,
-				CEFCAF072F6473A10006190D /* Assets.xcassets */,
+				CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */,
 			);
 			path = AxMJamfSync;
 			sourceTree = "<group>";
@@ -172,7 +172,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				CEFCAF082F6473A10006190D /* Assets.xcassets in Resources */,
+				CEC1B53D2F5CB1AF00566E8D /* Assets.xcassets in Resources */,
 				A022 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -315,7 +315,7 @@
 				CODE_SIGN_ENTITLEMENTS = AxMJamfSync/AxMJamfSync.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -331,7 +331,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
 				PRODUCT_NAME = "AxM Jamf Sync";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -347,7 +347,7 @@
 				CODE_SIGN_ENTITLEMENTS = AxMJamfSync/AxMJamfSync.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -363,7 +363,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
 				PRODUCT_NAME = "AxM Jamf Sync";
 				SWIFT_EMIT_LOC_STRINGS = YES;

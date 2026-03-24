@@ -39,6 +39,11 @@ enum PrefKey {
     static let lrWBFailed             = "lrWBFailed"
     static let activeScope            = "activeScope"
     static let dataCachedScope        = "dataCachedScope"
+    // Cursor resume — saves the last successful cursor + fetched count so a
+    // failed mid-fetch can resume from exactly where it stopped on next run.
+    static let axmResumeCursor        = "axmResumeCursor"
+    static let axmResumedDeviceCount  = "axmResumedDeviceCount"
+    static let axmResumeScope         = "axmResumeScope"
 }
 
 // MARK: - AppPreferences
@@ -213,8 +218,31 @@ final class AppPreferences: ObservableObject {
         return dict
     }
 
+    // MARK: - Cursor resume state
+    // Cleared when fetch completes fully. Scoped — an ABM cursor is never used for ASM.
+    var axmResumeCursor: String? {
+        get { let v = ud.string(forKey: PrefKey.axmResumeCursor); return v?.isEmpty == false ? v : nil }
+        set { ud.set(newValue ?? "", forKey: PrefKey.axmResumeCursor) }
+    }
+    var axmResumedDeviceCount: Int {
+        get { int(PrefKey.axmResumedDeviceCount, default: 0) }
+        set { ud.set(newValue, forKey: PrefKey.axmResumedDeviceCount) }
+    }
+    var axmResumeScope: String {
+        get { string(PrefKey.axmResumeScope, default: "") }
+        set { ud.set(newValue, forKey: PrefKey.axmResumeScope) }
+    }
+    func clearAxmResumeCursor() {
+        ud.removeObject(forKey: PrefKey.axmResumeCursor)
+        ud.removeObject(forKey: PrefKey.axmResumedDeviceCount)
+        ud.removeObject(forKey: PrefKey.axmResumeScope)
+    }
+
     // MARK: - Cache staleness helpers (used by SyncEngine)
     var axmIsFresh: Bool {
+        // A pending resume cursor means the previous fetch was incomplete —
+        // never treat a partial fetch as fresh; Phase 1 must resume it.
+        if axmResumeCursor != nil { return false }
         guard !alwaysRefreshDevices, let last = lastAxmSync else { return false }
         return -last.timeIntervalSinceNow < Double(devicesCacheDays) * 86_400
     }
@@ -233,6 +261,7 @@ final class AppPreferences: ObservableObject {
         lastAxmEpoch      = 0
         lastJamfEpoch     = 0
         lastCoverageEpoch = 0
+        clearAxmResumeCursor()
         objectWillChange.send()
         LogService.shared.info("Preferences: sync timestamps cleared — next sync re-fetches all.")
     }
