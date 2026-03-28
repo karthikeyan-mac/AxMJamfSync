@@ -15,6 +15,9 @@
         <attribute name="axmDeviceStatus"      optional="YES" attributeType="String"/>
         <attribute name="axmDeviceFetchedAt"   optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="axmPurchaseSource"    optional="YES" attributeType="String"/>
+        <attribute name="axmPurchaseSourceId"  optional="YES" attributeType="String"/>   <!-- purchaseSourceId from ABM -->
+        <attribute name="axmOrderNumber"       optional="YES" attributeType="String"/>   <!-- orderNumber from ABM -->
+        <attribute name="axmOrderDate"         optional="YES" attributeType="String"/>   <!-- orderDateTime YYYY-MM-DD from ABM -->
         <attribute name="axmModel"             optional="YES" attributeType="String"/>
         <attribute name="axmDeviceModel"       optional="YES" attributeType="String"/>
         <attribute name="axmDeviceClass"       optional="YES" attributeType="String"/>

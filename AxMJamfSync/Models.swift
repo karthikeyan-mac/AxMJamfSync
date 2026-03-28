@@ -100,6 +100,29 @@ enum WBStatus: String, Codable {
     }
 }
 
+/// Which device types to include in coverage fetch and Jamf write-back.
+/// The Apple org devices fetch always runs in full regardless of this setting.
+enum SyncDeviceScope: String, CaseIterable, Codable {
+    case both   = "both"
+    case mac    = "mac"
+    case mobile = "mobile"
+
+    var label: String {
+        switch self {
+        case .both:   return "Mac + Mobile"
+        case .mac:    return "Mac Only"
+        case .mobile: return "Mobile Only"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .both:   return "rectangle.stack.fill"
+        case .mac:    return "laptopcomputer"
+        case .mobile: return "iphone"
+        }
+    }
+}
+
 /// Filter kind for the Devices view — "Macs" vs "Mobile Devices".
 /// Derived from ABM productFamily (most reliable) and Jamf deviceType.
 enum DeviceKind: String, CaseIterable {
@@ -123,7 +146,10 @@ struct Device: Identifiable, Hashable {
     let axmDeviceId:            String?
     let axmDeviceStatus:        String?
     let axmDeviceFetchedAt:     String?
-    let axmPurchaseSource:      String?
+    let axmPurchaseSource:      String?   // purchaseSourceType
+    let axmPurchaseSourceId:    String?   // purchaseSourceId
+    let axmOrderNumber:         String?   // orderNumber
+    let axmOrderDate:           String?   // orderDateTime YYYY-MM-DD
     let axmModel:               String?   // productDescription from Apple API e.g. "MacBook Pro (16-inch, 2021)"
     let axmDeviceModel:         String?   // deviceModel short string e.g. "MacBook Pro 13\""
     let axmDeviceClass:         String?   // deviceClass from Apple API e.g. "MAC" | "IPAD"
@@ -241,6 +267,9 @@ struct Device: Identifiable, Hashable {
             axmDeviceStatus:      axmDeviceStatus,
             axmDeviceFetchedAt:   axmDeviceFetchedAt,
             axmPurchaseSource:    axmPurchaseSource,
+            axmPurchaseSourceId:  axmPurchaseSourceId,
+            axmOrderNumber:       axmOrderNumber,
+            axmOrderDate:         axmOrderDate,
             axmModel:             axmModel,
             axmDeviceModel:       axmDeviceModel,
             axmDeviceClass:       axmDeviceClass,
@@ -368,7 +397,7 @@ extension Device {
     static let sampleDevices: [Device] = [
         Device(serialNumber: "C02FN4P0DF91", deviceSource: .both,
                axmDeviceId: "C02FN4P0DF91", axmDeviceStatus: "ACTIVE",
-               axmDeviceFetchedAt: "2026-03-03T19:59:36Z", axmPurchaseSource: "APPLE",
+               axmDeviceFetchedAt: "2026-03-03T19:59:36Z", axmPurchaseSource: "APPLE", axmPurchaseSourceId: nil, axmOrderNumber: nil, axmOrderDate: nil,
                axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: "Mac",
                axmCoverageStatus: "ACTIVE", axmCoverageEndDate: "2027-03-01",
                axmCoverageFetchedAt: "2026-03-03T20:07:36Z", axmAgreementNumber: "APP-123456",
@@ -380,7 +409,7 @@ extension Device {
                jamfWarrantyDate: "2027-03-01", jamfVendor: "Apple", jamfAppleCareId: "APP-123456", jamfOsVersion: "14.5", jamfFileVaultStatus: "ALL_ENCRYPTED", jamfUsername: "karthik.m", jamfDeviceType: "computer", axmRawJson: nil, axmCoverageRawJson: nil),
         Device(serialNumber: "FVFXG2Q6Q6LR", deviceSource: .axmOnly,
                axmDeviceId: "FVFXG2Q6Q6LR", axmDeviceStatus: "ACTIVE",
-               axmDeviceFetchedAt: "2026-03-03T19:59:36Z", axmPurchaseSource: "APPLE",
+               axmDeviceFetchedAt: "2026-03-03T19:59:36Z", axmPurchaseSource: "APPLE", axmPurchaseSourceId: nil, axmOrderNumber: nil, axmOrderDate: nil,
                axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: nil,
                axmCoverageStatus: "NO_COVERAGE", axmCoverageEndDate: nil,
                axmCoverageFetchedAt: "2026-03-03T20:07:36Z", axmAgreementNumber: nil,
@@ -391,7 +420,7 @@ extension Device {
                jamfVendor: nil, jamfAppleCareId: nil, jamfOsVersion: nil, jamfFileVaultStatus: nil, jamfUsername: nil, jamfDeviceType: nil, axmRawJson: nil, axmCoverageRawJson: nil),
         Device(serialNumber: "C02GH1Z6DTY3", deviceSource: .both,
                axmDeviceId: "C02GH1Z6DTY3", axmDeviceStatus: "ACTIVE",
-               axmDeviceFetchedAt: "2026-03-03T19:59:36Z", axmPurchaseSource: "RESELLER",
+               axmDeviceFetchedAt: "2026-03-03T19:59:36Z", axmPurchaseSource: "RESELLER", axmPurchaseSourceId: "RSL-001", axmOrderNumber: "PO-20190101", axmOrderDate: "2019-01-01",
                axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: "Mac",
                axmCoverageStatus: "EXPIRED", axmCoverageEndDate: "2025-01-15",
                axmCoverageFetchedAt: "2026-03-03T20:07:36Z", axmAgreementNumber: "APP-789012",
@@ -403,7 +432,7 @@ extension Device {
                jamfWarrantyDate: nil, jamfVendor: nil, jamfAppleCareId: nil, jamfOsVersion: nil, jamfFileVaultStatus: nil, jamfUsername: nil, jamfDeviceType: nil, axmRawJson: nil, axmCoverageRawJson: nil),
         Device(serialNumber: "VMQ52LH6PF", deviceSource: .jamfOnly,
                axmDeviceId: nil, axmDeviceStatus: nil, axmDeviceFetchedAt: nil,
-               axmPurchaseSource: nil, axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: nil,
+               axmPurchaseSource: nil, axmPurchaseSourceId: nil, axmOrderNumber: nil, axmOrderDate: nil, axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: nil,
                axmCoverageStatus: nil, axmCoverageEndDate: nil,
                axmCoverageFetchedAt: nil, axmAgreementNumber: nil,
                wbStatus: nil, wbPushedAt: nil, wbNote: nil,

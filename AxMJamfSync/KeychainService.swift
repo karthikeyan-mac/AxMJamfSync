@@ -49,6 +49,7 @@ enum KeychainService {
         // Jamf tokens have a 30-minute TTL; caching avoids a round-trip on every app start.
         case jamfAccessToken       = "jamf.accessToken"
         case jamfAccessTokenExpiry = "jamf.accessTokenExpiry"
+        case jamfTokenTTL          = "jamf.tokenTTL"
     }
 
     // MARK: - Save
@@ -303,21 +304,22 @@ enum KeychainService {
     // Jamf TTL is 30 minutes; we evict if <60s remain (same guard as AxM).
 
     /// Save a Jamf OAuth access token and its expiry to Keychain.
-    static func saveJamfToken(_ token: String, expiry: Date) {
+    static func saveJamfToken(_ token: String, expiry: Date, ttl: Int) {
         save(token,                                    for: .jamfAccessToken)
         save(String(expiry.timeIntervalSince1970),    for: .jamfAccessTokenExpiry)
+        save(String(ttl),                             for: .jamfTokenTTL)
     }
 
-    /// Load a cached Jamf token if it still has >60s remaining.
-    static func loadJamfToken() -> (token: String, expiry: Date)? {
+    /// Load a cached Jamf token. Returns nil if not found or expired.
+    /// TTL is included so validToken() can compute an adaptive buffer.
+    static func loadJamfToken() -> (token: String, expiry: Date, ttl: Int)? {
         guard let token  = load(for: .jamfAccessToken), !token.isEmpty,
               let expStr = load(for: .jamfAccessTokenExpiry),
               let epoch  = Double(expStr) else { return nil }
         let expiry = Date(timeIntervalSince1970: epoch)
-        // Jamf tokens have a 30-min TTL. Require at least 5 minutes remaining
-        // to avoid fetching a new token on every run near expiry.
-        guard expiry.timeIntervalSinceNow > 300 else { return nil }
-        return (token, expiry)
+        guard expiry.timeIntervalSinceNow > 0 else { return nil }
+        let ttl = Int(load(for: .jamfTokenTTL).flatMap { Int($0) } ?? 1800)
+        return (token, expiry, ttl)
     }
 
     /// Evict the cached Jamf token (call after 401 or explicit logout).

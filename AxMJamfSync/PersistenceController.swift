@@ -280,6 +280,9 @@ extension CDDevice {
         axmDeviceId         = d.axmDeviceId
         axmDeviceStatus     = d.axmDeviceStatus
         axmPurchaseSource   = d.axmPurchaseSource
+        axmPurchaseSourceId = d.axmPurchaseSourceId
+        axmOrderNumber      = d.axmOrderNumber
+        axmOrderDate        = d.axmOrderDate
         axmModel            = d.axmModel
         axmDeviceModel      = d.axmDeviceModel
         axmDeviceClass      = d.axmDeviceClass
@@ -327,6 +330,9 @@ extension CDDevice {
             axmDeviceStatus:      axmDeviceStatus,
             axmDeviceFetchedAt:   fmt(axmDeviceFetchedAt),
             axmPurchaseSource:    axmPurchaseSource,
+            axmPurchaseSourceId:  axmPurchaseSourceId,
+            axmOrderNumber:       axmOrderNumber,
+            axmOrderDate:         axmOrderDate,
             axmModel:             axmModel,
             axmDeviceModel:       axmDeviceModel,
             axmDeviceClass:       axmDeviceClass,

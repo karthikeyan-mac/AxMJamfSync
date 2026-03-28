@@ -326,11 +326,18 @@ actor ABMService {
                 let serial = (record.attributes.serialNumber ?? "").uppercased().trimmingCharacters(in: .whitespaces)
                 guard !serial.isEmpty else { continue }
                 let recordJson = try? encoder.encode(record)
+                // orderDateTime from ABM is ISO8601 — extract YYYY-MM-DD prefix only
+                let orderDateStr = record.attributes.orderDateTime.flatMap { s in
+                    s.count >= 10 ? String(s.prefix(10)) : nil
+                }
                 let device = RawABMDevice(
                     deviceId:           record.id,
                     serialNumber:       serial,
                     deviceStatus:       record.attributes.deviceStatus ?? "ACTIVE",
                     purchaseSource:     record.attributes.purchaseSourceType,
+                    purchaseSourceId:   record.attributes.purchaseSourceId,
+                    orderNumber:        record.attributes.orderNumber,
+                    orderDate:          orderDateStr,
                     productDescription: record.attributes.productDescription,
                     deviceModel:        record.attributes.deviceModel,
                     deviceClass:        record.attributes.deviceClass,
@@ -685,7 +692,10 @@ struct RawABMDevice: Sendable {
     let deviceId:           String
     let serialNumber:       String
     let deviceStatus:       String
-    let purchaseSource:     String?
+    let purchaseSource:     String?   // purchaseSourceType
+    let purchaseSourceId:   String?   // purchaseSourceId
+    let orderNumber:        String?   // orderNumber
+    let orderDate:          String?   // orderDateTime → YYYY-MM-DD
     let productDescription: String?  // productDescription e.g. "MacBook Pro (16-inch, 2021)"
     let deviceModel:        String?  // deviceModel e.g. "MacBook Pro 13\""
     let deviceClass:        String?
