@@ -91,11 +91,11 @@ struct AxMCredentialsPanel: View {
     private var scopeAbbrev: String { store.axmCredentials.scope == .school ? "ASM" : "ABM" }
     private var scopeFull:   String { store.axmCredentials.scope == .school ? "Apple School Manager (ASM)" : "Apple Business Manager (ABM)" }
 
-    /// True when the cache contains data for a specific scope AND the user is trying
-    /// to switch to a different scope. Locks scope switching only when it would corrupt
-    /// existing cached data — you can always stay on the same scope as the cache.
-    /// Uses prefs.activeScope as the authoritative record of which scope's data is cached.
-    private var scopeLocked: Bool { store.cacheIsPopulated }
+    // Locked when credentials are configured OR cache exists.
+    // Derived purely from @Published AppStore properties — no Keychain reads in body.
+    private var scopeLocked: Bool {
+        !store.axmCredentials.clientId.isEmpty || store.cacheIsPopulated
+    }
 
     var body: some View {
         CardSection(title: scopeFull, icon: "applelogo") {
@@ -114,26 +114,20 @@ struct AxMCredentialsPanel: View {
                         ]
                     ))
 
-                // cachedScope: the scope whose data is actually in the CoreData cache.
-                // dataCachedScope is written by SyncEngine on every sync, and stamped
-                // at launch by AppStore.init if cache exists (migration). It is NEVER
-                // updated by UI scope switching, so it reliably reflects what's cached.
-                let cachedScope = AxMScope(rawValue: prefs.dataCachedScope) ?? .business
+                // Lock rule: account type is locked if EITHER credentials exist in
+                // Keychain OR data is cached. Both must be empty to allow switching.
+                // scopeLocked is a @State refreshed on appear and credential changes.
                 HStack(spacing: 10) {
                     ForEach(AxMScope.allCases, id: \.self) { scope in
                         Button {
-                            // Locked only when cache belongs to a DIFFERENT scope.
-                            let locked = store.cacheIsPopulated && cachedScope != scope
-                            guard !locked else { return }
-                            // Load this scope's own credentials from Keychain before switching
+                            guard !scopeLocked else { return }
                             let saved = KeychainService.loadAxMCredentials(for: scope)
                             store.axmCredentials = saved
                             store.axmAuthStatus  = .idle
-                            // Only re-save if creds for this scope were already in Keychain
-                            if !saved.clientId.isEmpty { store.saveAxMCredentials() }
-                            // Sync the toggle — reflect whether THIS scope has saved credentials
+                            prefs.activeScope = scope.rawValue
+                            KeychainService.save(scope.rawValue, for: .axmScope)
                             saveToKeychain = !saved.clientId.isEmpty
-                        } label: {
+                                        } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: scope == .school
                                     ? "graduationcap.fill"
@@ -165,17 +159,17 @@ struct AxMCredentialsPanel: View {
                             )
                         }
                         .buttonStyle(.plain)
-                        .disabled(store.cacheIsPopulated && cachedScope != scope)
-                        .opacity(store.cacheIsPopulated && cachedScope != scope ? 0.35 : 1.0)
-                        .help(store.cacheIsPopulated && cachedScope != scope
-                            ? "You can't switch account type while device records are stored — the existing data would conflict. Scroll to the bottom of this page and click Delete Cache first, then come back and change the account type."
+                        .disabled(scopeLocked && store.axmCredentials.scope != scope)
+                        .opacity(scopeLocked && store.axmCredentials.scope != scope ? 0.35 : 1.0)
+                        .help(scopeLocked && store.axmCredentials.scope != scope
+                            ? "Account type is locked. Clear your credentials and delete the cache to switch account type."
                             : "")
                     }
                 }
                 if scopeLocked {
                     HStack(spacing: 4) {
                         Image(systemName: "lock.fill").font(.caption2)
-                        Text("Account type is locked while Apple Manager data is cached. Reset cache to switch.")
+                        Text("Account type is locked. Clear credentials and delete cache to switch.")
                             .font(.caption2)
                     }
                     .foregroundStyle(.secondary)
@@ -216,7 +210,7 @@ struct AxMCredentialsPanel: View {
                     ]
                 ),
                 text: $store.axmCredentials.keyId,
-                isSecure: false,
+                isSecure: true,
                 placeholder: "AUTHKEY_XXXXXXXXXX")
 
             HStack(spacing: 8) {
@@ -612,6 +606,7 @@ struct CacheSettingsPanel: View {
     @State private var alwaysRefreshCoverage = false
     @State private var skipExistingCoverage  = false
     @State private var alwaysRefreshDevices  = false
+    @State private var syncDeviceScope: SyncDeviceScope = .both
 
     private var scopeAbbrev: String { store.axmCredentials.scope == .school ? "ASM" : "ABM" }
 
@@ -629,6 +624,39 @@ struct CacheSettingsPanel: View {
 
     var body: some View {
         CardSection(title: "Sync Options", icon: "slider.horizontal.3") {
+            // ── Sync Device Types — first row so it's clearly global (not Jamf-specific)
+            HStack(spacing: 0) {
+                InfoLabel(
+                    text: "Sync Device Types",
+                    info: InfoContent(
+                        icon:    "rectangle.stack.fill",
+                        title:   "Sync Device Types",
+                        summary: "Choose which device types to include in the AppleCare coverage fetch and Jamf write-back.",
+                        bullets: [
+                            "Mac + Mobile: all devices synced (default).",
+                            "Mac Only: AppleCare and Jamf sync run for Mac devices only. iPhone, iPad and Apple TV are skipped.",
+                            "Mobile Only: AppleCare and Jamf sync run for iPhone, iPad and Apple TV only. Macs are skipped.",
+                            "Apple org devices are always fetched in full — this setting only affects coverage and write-back.",
+                            "Existing data for unselected device types is retained in cache but won't be refreshed until you include them again."
+                        ]
+                ))
+                Spacer()
+                Picker("", selection: $syncDeviceScope) {
+                    ForEach(SyncDeviceScope.allCases, id: \.self) { scope in
+                        Text(scope.label).tag(scope)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 280)
+                .onChange(of: syncDeviceScope) { _, val in
+                    prefs.syncDeviceScope = val
+                }
+                .disabled(isRunning)
+                Spacer()
+            }
+
+            Divider()
+
             HStack(alignment: .top, spacing: 32) {
 
                 // ── Left: cache durations + force-refresh ─────────────
@@ -702,6 +730,7 @@ struct CacheSettingsPanel: View {
                                 skipExistingCoverage = false
                             }
                         }
+
                 }
 
                 Divider()
@@ -825,6 +854,7 @@ struct CacheSettingsPanel: View {
             alwaysRefreshCoverage = prefs.alwaysRefreshCoverage
             skipExistingCoverage  = prefs.skipExistingCoverage
             alwaysRefreshDevices  = prefs.alwaysRefreshDevices
+            syncDeviceScope       = prefs.syncDeviceScope
         }
         .disabled(isRunning)
         .opacity(isRunning ? 0.5 : 1)

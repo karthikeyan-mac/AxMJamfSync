@@ -77,28 +77,49 @@ final class AppStore: ObservableObject {
         let syncCount = (try? ctx.count(for: countReq)) ?? 0
         cacheIsPopulated = syncCount > 0
 
-        // Migration: if cache has data but dataCachedScope was never written
-        // (built before this field existed, or first launch after upgrade),
-        // stamp it now from activeScope so the scope lock works immediately
-        // without requiring a relaunch or a new sync.
-        if syncCount > 0 && self.prefs.dataCachedScope.isEmpty {
-            self.prefs.dataCachedScope = self.prefs.activeScope.isEmpty
-                ? AxMScope.business.rawValue
-                : self.prefs.activeScope
-        }
-
         loadDevicesFromCoreData()
         recomputeStats()
 
-        // Restore the active scope (ABM vs ASM) from UserDefaults on launch.
-        // prefs.activeScope is stamped on every sync and every credential save, so it
-        // is always the authoritative source. We simply load the matching Keychain
-        // credentials for whichever scope was active when the app last ran.
+        // Restore the active scope (ABM vs ASM) on launch.
         //
-        // NOTE: A previous "fallback" that inferred ASM from Keychain contents has been
-        // removed. It incorrectly switched scope to ASM whenever both ABM and ASM
-        // credentials existed in Keychain, even when ABM was the active scope.
-        let persistedScope = AxMScope(rawValue: self.prefs.activeScope) ?? .business
+        // The Keychain axm.scope key is the most reliable source — it is written
+        // atomically with the credentials every time the user saves, so it always
+        // reflects whichever scope actually has credentials stored.
+        //
+        // UserDefaults activeScope is only used as a tiebreaker when the Keychain
+        // scope key is absent (e.g. first-ever launch or keychain wipe).
+        //
+        // Priority order:
+        //   1. Keychain axm.scope — written with credentials, survives pref deletion & upgrades
+        //   2. Infer from which scope has credentials in Keychain — handles legacy Keychain
+        //      without axm.scope key (pre-scope-split versions)
+        //   3. UserDefaults activeScope — last resort for edge cases
+        //   4. Default to .business
+        let persistedScope: AxMScope = {
+            // 1. Keychain scope key — most reliable, written with credentials
+            if let keychainScope = KeychainService.load(for: .axmScope),
+               !keychainScope.isEmpty,
+               let s = AxMScope(rawValue: keychainScope) { return s }
+            // 2. Infer from which scope has credentials in Keychain
+            let asmCreds = KeychainService.loadAxMCredentials(for: .school)
+            let abmCreds = KeychainService.loadAxMCredentials(for: .business)
+            if !asmCreds.clientId.isEmpty && abmCreds.clientId.isEmpty { return .school }
+            if !abmCreds.clientId.isEmpty { return .business }
+            // 3. UserDefaults — fallback when Keychain has no credentials at all
+            if !self.prefs.activeScope.isEmpty,
+               let s = AxMScope(rawValue: self.prefs.activeScope) { return s }
+            // 4. Default
+            return .business
+        }()
+        // Stamp resolved scope back to UserDefaults so it stays consistent
+        if self.prefs.activeScope != persistedScope.rawValue {
+            self.prefs.activeScope = persistedScope.rawValue
+        }
+        // If cache exists but dataCachedScope was lost (pref deletion), restore it
+        // from the persisted scope so the scope-lock UI is correct immediately.
+        if syncCount > 0 && self.prefs.dataCachedScope.isEmpty {
+            self.prefs.dataCachedScope = persistedScope.rawValue
+        }
         if axmCredentials.scope != persistedScope {
             var corrected = KeychainService.loadAxMCredentials(for: persistedScope)
             corrected.scope = persistedScope

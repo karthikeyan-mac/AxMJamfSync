@@ -39,6 +39,7 @@ enum PrefKey {
     static let lrWBFailed             = "lrWBFailed"
     static let activeScope            = "activeScope"
     static let dataCachedScope        = "dataCachedScope"
+    static let syncDeviceScope        = "syncDeviceScope"
     // Cursor resume — saves the last successful cursor + fetched count so a
     // failed mid-fetch can resume from exactly where it stopped on next run.
     static let axmResumeCursor        = "axmResumeCursor"
@@ -188,7 +189,7 @@ final class AppPreferences: ObservableObject {
     // MARK: - Scope persistence (survives relaunch)
     // Stores "business" or "school". Saved on every sync + credential save.
     var activeScope: String {
-        get { string(PrefKey.activeScope, default: AxMScope.business.rawValue) }
+        get { string(PrefKey.activeScope, default: "") }
         set { ud.set(newValue, forKey: PrefKey.activeScope); objectWillChange.send() }
     }
 
@@ -236,6 +237,16 @@ final class AppPreferences: ObservableObject {
         ud.removeObject(forKey: PrefKey.axmResumeCursor)
         ud.removeObject(forKey: PrefKey.axmResumedDeviceCount)
         ud.removeObject(forKey: PrefKey.axmResumeScope)
+    }
+
+    // MARK: - Device scope (which device types to sync)
+    /// Controls which device types are included in coverage fetch and Jamf sync.
+    /// .both = all devices (default), .mac = Mac only, .mobile = iPhone/iPad/AppleTV only.
+    var syncDeviceScope: SyncDeviceScope {
+        get {
+            SyncDeviceScope(rawValue: ud.string(forKey: PrefKey.syncDeviceScope) ?? "") ?? .both
+        }
+        set { ud.set(newValue.rawValue, forKey: PrefKey.syncDeviceScope); objectWillChange.send() }
     }
 
     // MARK: - Cache staleness helpers (used by SyncEngine)

@@ -380,7 +380,8 @@ final class SyncEngine: ObservableObject {
                     || store.jamfCredentials.clientSecret.isEmpty {
                     log.warn("Step 2/4 — Jamf credentials not configured, skipping.")
                 } else {
-                    // ── 2a: Computers (independent — failure does not block mobile) ──
+                    // ── 2a: Computers (skipped when syncDeviceScope == .mobile) ───────
+                    if prefs.syncDeviceScope != .mobile {
                     do {
                         rawJamf = try await jamfService.fetchComputers(
                             pageSize: pageSize,
@@ -399,8 +400,12 @@ final class SyncEngine: ObservableObject {
                         log.error("Step 2/4 — Jamf computer fetch failed: \(error.localizedDescription). Continuing without computers.")
                         rawJamf = []
                     }
+                    } else {
+                        log.info("Step 2/4 — Jamf computers skipped (Sync Device Types = Mobile Only).")
+                    }
 
-                    // ── 2b: Mobile devices (independent — failure does not block computers or merge) ──
+                    // ── 2b: Mobile devices (skipped when syncDeviceScope == .mac) ─────
+                    if prefs.syncDeviceScope != .mac {
                     do {
                         rawMobile = try await jamfService.fetchMobileDevices(
                             pageSize: pageSize,
@@ -418,6 +423,9 @@ final class SyncEngine: ObservableObject {
                     } catch {
                         log.warn("Step 2/4 — Jamf mobile fetch failed: \(error.localizedDescription). Continuing without mobile devices.")
                         rawMobile = []
+                    }
+                    } else {
+                        log.info("Step 2/4 — Jamf mobile devices skipped (Sync Device Types = Mac Only).")
                     }
                 }
             }
@@ -440,9 +448,14 @@ final class SyncEngine: ObservableObject {
                 let abmSnapshot    = rawABM
                 let jamfSnapshot   = rawJamf
                 let mobileSnapshot = rawMobile
-                let merged = await Task.detached(priority: .userInitiated) {
+                let mergeResult = await Task.detached(priority: .userInitiated) {
                     mergeDevicesOffActor(abm: abmSnapshot, jamf: jamfSnapshot, mobile: mobileSnapshot, existing: existingSnap)
                 }.value
+                let merged = mergeResult.devices
+                if mergeResult.clearedExternally > 0 {
+                    log.warn("\(mergeResult.clearedExternally) device(s) had purchasing data changed or cleared in Jamf (warrantyDate / vendor / poNumber / poDate) — re-queued for write-back.")
+                    log.debug("[Detail] Purchasing data mismatch: \(mergeResult.clearedExternally) device(s) found with one or more fields changed in Jamf since last sync.")
+                }
 
                 let released  = merged.filter { $0.axmDeviceStatus == "RELEASED" }.count
                 if released > 0 { log.warn("\(released) device(s) no longer in org — status RELEASED.") }
@@ -500,11 +513,18 @@ final class SyncEngine: ObservableObject {
             let now                 = Date()
             let isoParser           = ISO8601DateFormatter()
 
+            let syncScope = prefs.syncDeviceScope
             let notFetchedDevices = store.devices.filter {
                 // axmDeviceId == nil means AxM was skipped this run (cache fresh) and the device
                 // was merged from Jamf only — it has no ABM/ASM device ID to query the coverage API.
                 // Excluding nil-ID devices here prevents the "Coverage skipped — no AxM device ID" warn.
-                $0.deviceSource != .jamfOnly && $0.axmDeviceId != nil && $0.coverageStatus == .notFetched
+                guard $0.deviceSource != .jamfOnly && $0.axmDeviceId != nil && $0.coverageStatus == .notFetched else { return false }
+                // Respect Sync Device Types setting — skip device types not selected
+                switch syncScope {
+                case .both:   return true
+                case .mac:    return !$0.isMobile
+                case .mobile: return $0.isMobile
+                }
             }
             let notFetchedCount = notFetchedDevices.count
 
@@ -513,6 +533,12 @@ final class SyncEngine: ObservableObject {
             // Short-circuit: if the global coverageIsFresh flag is true, no per-device check needed.
             let staleDevices: [Device] = (prefs.skipExistingCoverage || prefs.coverageIsFresh) ? [] : store.devices.filter {
                 guard $0.deviceSource != .jamfOnly && $0.axmDeviceId != nil && $0.coverageStatus != .notFetched else { return false }
+                // Respect Sync Device Types setting
+                switch syncScope {
+                case .mac:    if $0.isMobile  { return false }
+                case .mobile: if !$0.isMobile { return false }
+                case .both:   break
+                }
                 guard let fetchedStr = $0.axmCoverageFetchedAt,
                       let fetchedDate = isoParser.date(from: fetchedStr)
                         ?? ISO8601DateFormatter().date(from: fetchedStr) else { return true }
@@ -534,6 +560,9 @@ final class SyncEngine: ObservableObject {
             // the remaining devices will need coverage anyway once the fetch completes.
             // Jamf write-back (Step 4) still runs for devices that already have cached coverage.
             let axmFetchIncomplete = prefs.axmResumeCursor != nil
+            if syncScope != .both {
+                log.info("Step 3/4 — Sync Device Types: \(syncScope.label) — coverage and write-back scoped accordingly.")
+            }
 
             if axmFetchIncomplete {
                 let fetchedSoFar = store.devices.filter { $0.deviceSource != .jamfOnly && $0.axmDeviceId != nil }.count
@@ -804,7 +833,12 @@ final class SyncEngine: ObservableObject {
                 if !hasCoverageData {
                     return false  // skip: no coverage API data yet — don't write vendor-only
                 }
-                return true
+                // Respect Sync Device Types setting — only write-back selected device types
+                switch syncScope {
+                case .both:   return true
+                case .mac:    return !$0.isMobile
+                case .mobile: return $0.isMobile
+                }
             }
             // coverageLimit is an Apple API rate-limit only — it must NOT cap Step 4.
             // Any device that already has coverage data in CoreData but hasn't been
@@ -849,10 +883,6 @@ final class SyncEngine: ObservableObject {
                 // closes idle connections mid-flight causing -999 NSURLErrorCancelled errors.
                 // 5 stays well within Jamf's recommended concurrency while avoiding this.
                 let concurrency = 5
-                // Pre-fetch token ONCE so all parallel tasks reuse it without each
-                // calling validToken() — Jamf TTL is only 59s, 8 concurrent actor
-                // calls would each see an expired token and all fetch fresh ones.
-                let sharedJamfToken = try await jamfService.validToken()
 
                 // Thread-safe accumulators — written only on MainActor via batched upsert
                 // but counted locally then merged after TaskGroup.
@@ -876,6 +906,10 @@ final class SyncEngine: ObservableObject {
                 chunkLoop: for (chunkIdx, chunk) in chunks.enumerated() {
                     try Task.checkCancellation()
                     let chunkOffset = chunkIdx * concurrency
+                    // Refresh token per chunk — validToken() uses in-memory cache with 60s
+                    // buffer so this is a free date comparison on most chunks. Prevents
+                    // 401 mid-write-back on Jamf instances with short token TTLs.
+                    let sharedJamfToken = try await jamfService.validToken()
 
                     let results: [WBResult] = try await withThrowingTaskGroup(of: WBResult.self) { group in
                         for (j, device) in chunk.enumerated() {
@@ -885,13 +919,24 @@ final class SyncEngine: ObservableObject {
                                 }
                                 // Inner helper — attempt one PATCH, return the WBResult.
                                 // Extracted so we can call it twice (initial + -999 retry).
+                                // Build vendor string: "purchaseSourceType (purchaseSourceId)"
+                                // If purchaseSourceId is nil/empty, use purchaseSourceType alone.
+                                let vendorStr: String? = {
+                                    guard let src = device.axmPurchaseSource, !src.isEmpty else { return nil }
+                                    if let sid = device.axmPurchaseSourceId, !sid.isEmpty {
+                                        return "\(src) (\(sid))"
+                                    }
+                                    return src
+                                }()
                                 func attempt() async throws {
                                     if device.isMobile {
                                         try await jamfService.writeWarrantyBackMobile(
                                             mobileDeviceId: jamfId,
                                             warrantyDate:   device.axmCoverageEndDate,
                                             appleCareId:    device.axmAgreementNumber,
-                                            vendor:         device.axmPurchaseSource,
+                                            vendor:         vendorStr,
+                                            poNumber:       device.axmOrderNumber,
+                                            poDate:         device.axmOrderDate,
                                             token:          sharedJamfToken
                                         )
                                     } else {
@@ -899,7 +944,9 @@ final class SyncEngine: ObservableObject {
                                             jamfId:       jamfId,
                                             warrantyDate: device.axmCoverageEndDate,
                                             appleCareId:  device.axmAgreementNumber,
-                                            vendor:       device.axmPurchaseSource,
+                                            vendor:       vendorStr,
+                                            poNumber:     device.axmOrderNumber,
+                                            poDate:       device.axmOrderDate,
                                             token:        sharedJamfToken
                                         )
                                     }
@@ -946,13 +993,13 @@ final class SyncEngine: ObservableObject {
                             wbSynced += 1
                             if device.isMobile { runWBSyncedMob += 1 } else { runWBSyncedMac += 1 }
                             currentStep = globalIdx
-                            log.info("Jamf Update [\(globalIdx)/\(wbTargets.count)] \(device.serialNumber): OK")
+                            log.info("Jamf Update \(device.isMobile ? "Mobile" : "Mac") [\(globalIdx)/\(wbTargets.count)] \(device.serialNumber): OK")
                             wbBatch.append(device.withWBStatus(.synced, note: nil))
                         case .failed(let device, let msg):
                             wbFailed += 1
                             if device.isMobile { runWBFailedMob += 1 } else { runWBFailedMac += 1 }
                             currentStep = globalIdx
-                            log.warn("Jamf Update FAILED \(device.serialNumber) — \(msg)")
+                            log.warn("Jamf Update \(device.isMobile ? "Mobile" : "Mac") FAILED \(device.serialNumber) — \(msg)")
                             wbBatch.append(device.withWBStatus(.failed, note: msg))
                         case .skipped(let device, let reason):
                             wbSkipped += 1
@@ -981,20 +1028,29 @@ final class SyncEngine: ObservableObject {
 
                         for device in toRetry {
                             guard let jamfId = device.jamfId else { continue }
+                            let retryVendor: String? = {
+                                guard let src = device.axmPurchaseSource, !src.isEmpty else { return nil }
+                                if let sid = device.axmPurchaseSourceId, !sid.isEmpty { return "\(src) (\(sid))" }
+                                return src
+                            }()
                             do {
                                 if device.isMobile {
                                     try await jamfService.writeWarrantyBackMobile(
                                         mobileDeviceId: jamfId,
                                         warrantyDate:   device.axmCoverageEndDate,
                                         appleCareId:    device.axmAgreementNumber,
-                                        vendor:         device.axmPurchaseSource
+                                        vendor:         retryVendor,
+                                        poNumber:       device.axmOrderNumber,
+                                        poDate:         device.axmOrderDate
                                     )
                                 } else {
                                     try await jamfService.writeWarrantyBack(
                                         jamfId:       jamfId,
                                         warrantyDate: device.axmCoverageEndDate,
                                         appleCareId:  device.axmAgreementNumber,
-                                        vendor:       device.axmPurchaseSource
+                                        vendor:       retryVendor,
+                                        poNumber:     device.axmOrderNumber,
+                                        poDate:       device.axmOrderDate
                                     )
                                 }
                                 wbSynced += 1
@@ -1128,6 +1184,7 @@ final class SyncEngine: ObservableObject {
             log.info("═══════════════════════════════════════════════")
             log.info("  SYNC SUMMARY")
             log.info("═══════════════════════════════════════════════")
+            log.info("  Sync Device Types   : \(prefs.syncDeviceScope.label)")
             log.info("  Started             : \(df.string(from: runStart))")
             log.info("  Ended               : \(df.string(from: endTime))")
             log.info("  Total time          : \(elapsedFmt)")
@@ -1218,9 +1275,14 @@ final class SyncEngine: ObservableObject {
             if !rawABM.isEmpty || !rawJamf.isEmpty || !rawMobile.isEmpty {
                 log.info("Saving \(rawABM.count) AxM + \(rawJamf.count) Jamf + \(rawMobile.count) mobile partial results before exit…")
                 let existingSnap = await store.fetchAllDevicesForMerge()
-                let partial = await Task.detached(priority: .userInitiated) {
+                let partialResult = await Task.detached(priority: .userInitiated) {
                     mergeDevicesOffActor(abm: rawABM, jamf: rawJamf, mobile: rawMobile, existing: existingSnap)
                 }.value
+                let partial = partialResult.devices
+                if partialResult.clearedExternally > 0 {
+                    log.warn("\(partialResult.clearedExternally) device(s) had purchasing data changed or cleared in Jamf (warrantyDate / vendor / poNumber / poDate) — re-queued for write-back.")
+                    log.debug("[Detail] Purchasing data mismatch: \(partialResult.clearedExternally) device(s) found with one or more fields changed in Jamf since last sync.")
+                }
                 await store.upsertDevices(partial.map { $0.toDevice() })
                 await store.loadDevicesFromCoreDataSync()
                 // Only stamp lastAxmSync if no resume cursor is pending — a partial
@@ -1272,7 +1334,7 @@ private func mergeDevicesOffActor(
         jamf:     [RawJamfComputer],
         mobile:   [RawJamfMobileDevice],
         existing: [Device]
-    ) -> [SyncDevice] {
+    ) -> (devices: [SyncDevice], clearedExternally: Int) {
 
         let existingBySerial: [String: Device] = Dictionary(
             existing.map { ($0.serialNumber, $0) },
@@ -1280,6 +1342,7 @@ private func mergeDevicesOffActor(
         )
 
         var result: [String: SyncDevice] = [:]
+        var clearedExternallyCount = 0
         let now = _iso8601.string(from: Date())
 
         // Always pre-populate result from existing CoreData records.
@@ -1362,7 +1425,10 @@ private func mergeDevicesOffActor(
                 axmDeviceId:          d.deviceId,
                 axmDeviceStatus:      d.deviceStatus,
                 axmDeviceFetchedAt:   now,
-                axmPurchaseSource:    d.purchaseSource ?? ex?.axmPurchaseSource,
+                axmPurchaseSource:    d.purchaseSource   ?? ex?.axmPurchaseSource,
+                axmPurchaseSourceId:  d.purchaseSourceId ?? ex?.axmPurchaseSourceId,
+                axmOrderNumber:       d.orderNumber      ?? ex?.axmOrderNumber,
+                axmOrderDate:         d.orderDate        ?? ex?.axmOrderDate,
                 axmModel:             d.productDescription ?? ex?.axmModel,
                 axmDeviceModel:       d.deviceModel ?? ex?.axmDeviceModel,
                 axmDeviceClass:       d.deviceClass ?? ex?.axmDeviceClass,
@@ -1446,12 +1512,22 @@ private func mergeDevicesOffActor(
                 let hasCoverageData = sd.axmCoverageStatus != nil
                 let coverageChanged = sd.axmCoverageEndDate != existingBySerial[c.serialNumber]?.axmCoverageEndDate
                     || sd.axmAgreementNumber != existingBySerial[c.serialNumber]?.axmAgreementNumber
-                // Detect external clearing: we have coverage data, last status was .synced,
-                // but Jamf now reports a blank/mismatched warranty date — someone cleared it in Jamf.
+                // Detect external changes: last status was .synced but Jamf now reports
+                // a blank or mismatched value for any field we write — re-queue to restore.
+                // Covers: warrantyDate cleared, vendor changed, poNumber/poDate cleared.
                 let wasWritten = existingBySerial[c.serialNumber]?.wbStatus == .synced
+                let ex_c = existingBySerial[c.serialNumber]
+                let expectedVendor: String? = {
+                    guard let src = sd.axmPurchaseSource, !src.isEmpty else { return nil }
+                    if let sid = sd.axmPurchaseSourceId, !sid.isEmpty { return "\(src) (\(sid))" }
+                    return src
+                }()
                 let jamfDateCleared = wasWritten && hasCoverageData
-                    && sd.axmCoverageEndDate != nil   // we have a date to write
-                    && (c.warrantyDate == nil || c.warrantyDate != sd.axmCoverageEndDate)
+                    && sd.axmCoverageEndDate != nil
+                    && ((c.warrantyDate == nil || c.warrantyDate != sd.axmCoverageEndDate)
+                     || (expectedVendor != nil && (c.vendor == nil || c.vendor != expectedVendor))
+                     || (sd.axmOrderNumber != nil && (c.poNumber == nil || c.poNumber != sd.axmOrderNumber))
+                     || (sd.axmOrderDate   != nil && (c.poDate   == nil || c.poDate   != sd.axmOrderDate)))
                 if isNewJamfMatch {
                     // Always queue on first Jamf match regardless of prior status
                     sd.wbStatus = .pending
@@ -1465,8 +1541,7 @@ private func mergeDevicesOffActor(
                 } else if jamfDateCleared {
                     // Purchasing info was cleared in Jamf console — re-queue so we restore it
                     sd.wbStatus = .pending
-                    let serial = sd.serialNumber
-                    Task { @MainActor in LogService.shared.warn("Jamf warranty cleared externally for \(serial) — re-queuing write-back.") }
+                    clearedExternallyCount += 1
                 } else if existingBySerial[c.serialNumber]?.wbStatus == .failed {
                     // Retry devices that failed in a previous run — Fix #3
                     sd.wbStatus = .pending
@@ -1482,6 +1557,9 @@ private func mergeDevicesOffActor(
                     axmDeviceStatus:      nil,
                     axmDeviceFetchedAt:   nil,
                     axmPurchaseSource:    nil,
+                    axmPurchaseSourceId:  nil,
+                    axmOrderNumber:       nil,
+                    axmOrderDate:         nil,
                     axmModel:             nil,
                     axmDeviceModel:       nil,
                     axmDeviceClass:       nil,
@@ -1546,20 +1624,29 @@ private func mergeDevicesOffActor(
                 let hasCoverageData = sd.axmCoverageStatus != nil
                 let coverageChanged = sd.axmCoverageEndDate != existingBySerial[m.serialNumber]?.axmCoverageEndDate
                     || sd.axmAgreementNumber != existingBySerial[m.serialNumber]?.axmAgreementNumber
-                // Detect external clearing: we have coverage data, last status was .synced,
-                // but Jamf now reports a blank/mismatched warranty date — someone cleared it in Jamf.
+                // Detect external changes: last status was .synced but Jamf now reports
+                // a blank or mismatched value for any field we write — re-queue to restore.
+                // Covers: warrantyDate cleared, vendor changed, poNumber/poDate cleared.
                 let wasWritten = existingBySerial[m.serialNumber]?.wbStatus == .synced
+                let ex_m = existingBySerial[m.serialNumber]
+                let expectedVendorMob: String? = {
+                    guard let src = sd.axmPurchaseSource, !src.isEmpty else { return nil }
+                    if let sid = sd.axmPurchaseSourceId, !sid.isEmpty { return "\(src) (\(sid))" }
+                    return src
+                }()
                 let jamfDateCleared = wasWritten && hasCoverageData
                     && sd.axmCoverageEndDate != nil
-                    && (m.warrantyDate == nil || m.warrantyDate != sd.axmCoverageEndDate)
+                    && ((m.warrantyDate == nil || m.warrantyDate != sd.axmCoverageEndDate)
+                     || (expectedVendorMob != nil && (m.vendor == nil || m.vendor != expectedVendorMob))
+                     || (sd.axmOrderNumber != nil && (m.poNumber == nil || m.poNumber != sd.axmOrderNumber))
+                     || (sd.axmOrderDate   != nil && (m.poDate   == nil || m.poDate   != sd.axmOrderDate)))
                 if isNewJamfMatch                          { sd.wbStatus = .pending }
                 else if hasCoverageData && coverageChanged { sd.wbStatus = .pending }
                 else if !hasCoverageData && existingBySerial[m.serialNumber]?.wbStatus != .synced {
                     sd.wbStatus = .pending   // no coverage yet — keep pending; don't clobber .synced
                 } else if jamfDateCleared {
                     sd.wbStatus = .pending
-                    let serial = sd.serialNumber
-                    Task { @MainActor in LogService.shared.warn("Jamf warranty cleared externally for \(serial) — re-queuing write-back.") }
+                    clearedExternallyCount += 1
                 } else if existingBySerial[m.serialNumber]?.wbStatus == .failed {
                     sd.wbStatus = .pending   // retry failed devices — Fix #3
                 }
@@ -1574,6 +1661,9 @@ private func mergeDevicesOffActor(
                     axmDeviceStatus:      nil,
                     axmDeviceFetchedAt:   nil,
                     axmPurchaseSource:    nil,
+                    axmPurchaseSourceId:  nil,
+                    axmOrderNumber:       nil,
+                    axmOrderDate:         nil,
                     axmModel:             nil,
                     axmDeviceModel:       nil,
                     axmDeviceClass:       nil,
@@ -1607,7 +1697,7 @@ private func mergeDevicesOffActor(
             }
         }
 
-        return Array(result.values).sorted { $0.serialNumber < $1.serialNumber }
+        return (Array(result.values).sorted { $0.serialNumber < $1.serialNumber }, clearedExternallyCount)
     }
 
 // MARK: - SyncError
@@ -1633,6 +1723,9 @@ private struct SyncDevice {
     var axmDeviceStatus:      String?
     var axmDeviceFetchedAt:   String?
     var axmPurchaseSource:    String?
+    var axmPurchaseSourceId:  String?
+    var axmOrderNumber:       String?
+    var axmOrderDate:         String?
     var axmModel:             String?
     var axmDeviceModel:       String?
     var axmDeviceClass:       String?
@@ -1671,6 +1764,9 @@ private struct SyncDevice {
             axmDeviceStatus:      axmDeviceStatus,
             axmDeviceFetchedAt:   axmDeviceFetchedAt,
             axmPurchaseSource:    axmPurchaseSource,
+            axmPurchaseSourceId:  axmPurchaseSourceId,
+            axmOrderNumber:       axmOrderNumber,
+            axmOrderDate:         axmOrderDate,
             axmModel:             axmModel,
             axmDeviceModel:       axmDeviceModel,
             axmDeviceClass:       axmDeviceClass,

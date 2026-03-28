@@ -228,6 +228,7 @@ actor JamfService {
 
     private var cachedToken: String?
     private var tokenExpiry: Date = .distantPast
+    private var tokenTTL:    Int  = 1800  // last known TTL — used for adaptive buffer
 
     private let session: URLSession = {
         let cfg = URLSessionConfiguration.ephemeral
@@ -268,13 +269,13 @@ actor JamfService {
 
         await onProgress(0, 0)
 
-        // Fetch the token once before the page loop — all pages use the same token.
-        // Previously validToken() was called on every page iteration, causing N log lines
-        // ("fetching fresh token") and N token-endpoint hits on cold start.
-        let token = try await validToken()
-
         while results.count < total {
             try Task.checkCancellation()
+            // Refresh token per page — validToken() checks in-memory cache first
+            // (60s buffer) so this is a free date comparison on most iterations.
+            // Prevents 401 mid-fetch when Jamf token TTL is shorter than the total
+            // fetch time (e.g. PROD servers configured with ~3 min TTL at 40k+ devices).
+            let token = try await validToken()
 
             // section must be sent as repeated query items — same as Python's list param
             // URLComponents doesn't deduplicate, so build URL manually.
@@ -414,7 +415,9 @@ actor JamfService {
         jamfId:         String,
         warrantyDate:   String?,    // YYYY-MM-DD from axm_coverage_end_date
         appleCareId:    String?,    // from axm_agreement_number
-        vendor:         String?,    // from axm_purchase_source
+        vendor:         String?,    // "purchaseSourceType (purchaseSourceId)"
+        poNumber:       String?,    // from axm_order_number
+        poDate:         String?,    // YYYY-MM-DD from axm_order_date
         token:          String? = nil  // pre-fetched token — avoids N concurrent validToken() calls
     ) async throws {
 
@@ -423,6 +426,8 @@ actor JamfService {
         if let v = appleCareId,  !v.isEmpty { purchasing["appleCareId"]  = v }
         if let v = warrantyDate, !v.isEmpty { purchasing["warrantyDate"] = v }
         if let v = vendor,       !v.isEmpty { purchasing["vendor"]       = v }
+        if let v = poNumber,     !v.isEmpty { purchasing["poNumber"]     = v }
+        if let v = poDate,       !v.isEmpty { purchasing["poDate"]       = v }
 
         guard !purchasing.isEmpty else {
             throw JamfError.noDataToWrite("All coverage fields empty for jamfId=\(jamfId)")
@@ -461,11 +466,10 @@ actor JamfService {
 
         await onProgress(0, 0)
 
-        // Token fetched once before the page loop — reused across all pages.
-        let mobileToken = try await validToken()
-
         while results.count < total {
             try Task.checkCancellation()
+            // Refresh token per page — same rationale as fetchComputers.
+            let mobileToken = try await validToken()
 
             let urlStr = baseURL + "/api/v2/mobile-devices/detail"
             guard var components = URLComponents(string: urlStr) else {
@@ -592,14 +596,21 @@ actor JamfService {
         mobileDeviceId: String,
         warrantyDate:   String?,    // YYYY-MM-DD — converted to ISO8601 for mobile API
         appleCareId:    String?,
-        vendor:         String?,
+        vendor:         String?,    // "purchaseSourceType (purchaseSourceId)"
+        poNumber:       String?,    // from axm_order_number
+        poDate:         String?,    // YYYY-MM-DD from axm_order_date
         token:          String? = nil  // pre-fetched token
     ) async throws {
 
         var purchasing: [String: String] = [:]
         if let v = appleCareId,  !v.isEmpty { purchasing["appleCareId"]         = v }
         if let v = vendor,       !v.isEmpty { purchasing["vendor"]              = v }
-        // Mobile PATCH requires ISO8601 full date-time — append T00:00:00Z if plain date
+        if let v = poNumber,     !v.isEmpty { purchasing["poNumber"]            = v }
+        // Mobile PATCH requires ISO8601 full date-time for all date fields
+        if let v = poDate,       !v.isEmpty {
+            let isoPoDate = v.count == 10 ? v + "T00:00:00.000Z" : v
+            purchasing["poDate"] = isoPoDate
+        }
         if let v = warrantyDate, !v.isEmpty {
             let iso = v.count == 10 ? v + "T00:00:00.000Z" : v
             purchasing["warrantyExpiresDate"] = iso
@@ -630,17 +641,24 @@ actor JamfService {
     // MARK: - Token management
 
     func validToken() async throws -> String {
-        // S2: Check in-memory cache first (fastest path)
-        if let t = cachedToken, Date() < tokenExpiry.addingTimeInterval(-60) {
+        // Adaptive buffer: never > half the TTL, min 10s, max 60s.
+        // A fixed 60s buffer on a 60s TTL token means the cache is never valid.
+        // e.g. TTL=60 → buffer=30s | TTL=179 → buffer=60s | TTL=1800 → buffer=60s
+        let buffer = Double(max(10, min(60, tokenTTL / 2)))
+
+        // Check in-memory cache first (fastest path)
+        if let t = cachedToken, Date() < tokenExpiry.addingTimeInterval(-buffer) {
             let remaining = Int(tokenExpiry.timeIntervalSinceNow)
             await LogService.shared.debug("[Jamf] Token: reusing cached token — \(remaining / 60)m \(remaining % 60)s remaining.")
             return t
         }
-        // S2: Check Keychain cache — survives app restarts within the 30-min TTL.
-        // Without this, every cold launch fetched a new token even if the previous was valid.
-        if let cached = KeychainService.loadJamfToken() {
+        // Check Keychain cache — survives app restarts.
+        // Use same adaptive buffer to avoid returning a near-expired token.
+        if let cached = KeychainService.loadJamfToken(),
+           Date() < cached.expiry.addingTimeInterval(-Double(max(10, min(60, cached.ttl / 2)))) {
             cachedToken = cached.token
             tokenExpiry = cached.expiry
+            tokenTTL    = cached.ttl
             let remaining = Int(cached.expiry.timeIntervalSinceNow)
             await LogService.shared.debug("[Jamf] Token: restored from Keychain — \(remaining / 60)m \(remaining % 60)s remaining.")
             return cached.token
@@ -648,9 +666,9 @@ actor JamfService {
         await LogService.shared.debug("[Jamf] Token: fetching fresh token from \(baseURL)/api/v1/oauth/token…")
         let (token, ttl) = try await fetchToken()
         cachedToken = token
+        tokenTTL    = ttl
         tokenExpiry = Date().addingTimeInterval(TimeInterval(ttl))
-        // S2: Persist the new token so the next app launch can reuse it.
-        KeychainService.saveJamfToken(token, expiry: tokenExpiry)
+        KeychainService.saveJamfToken(token, expiry: tokenExpiry, ttl: ttl)
         await LogService.shared.debug("[Jamf] Token: received — TTL \(ttl)s (\(ttl / 60)m). Saved to Keychain.")
         return token
     }
