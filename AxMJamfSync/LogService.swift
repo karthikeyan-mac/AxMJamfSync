@@ -79,6 +79,8 @@ final class LogService: ObservableObject {
     private let maxFileBytes:    Int = 10 * 1_024 * 1_024   // 10 MB
     private let maxArchivedLogs: Int = 5
 
+    /// Shared singleton — uses the default log path (sync.log).
+    /// Used for the Default (v1-migrated) environment.
     private init() {
         logsDir = FileManager.default
             .urls(for: .libraryDirectory, in: .userDomainMask)[0]
@@ -90,6 +92,18 @@ final class LogService: ObservableObject {
         }
         // S5: Restrict log file to owner-read/write only (0600).
         // Logs contain device serials, MACs, agreement IDs — not world-readable.
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: logURL.path)
+        openFileHandle()
+    }
+
+    /// Internal init for per-environment log files.
+    private init(logURL: URL, logsDir: URL) {
+        self.logsDir = logsDir
+        self.logURL  = logURL
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        }
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o600], ofItemAtPath: logURL.path)
         openFileHandle()
@@ -198,13 +212,48 @@ final class LogService: ObservableObject {
 
     private func writeLine(_ line: String) {
         guard let data = (line + "\n").data(using: .utf8) else { return }
-        // Dispatch file write to background queue — never block the main thread.
-        // Capture fileHandle directly (it is only mutated on @MainActor, so the
-        // write races at worst with a rotation, which is safe: rotation closes and
-        // reopens the handle before ioQueue sees the next write).
-        let fh = fileHandle
-        ioQueue.async { fh?.write(data) }
+        let fh      = fileHandle
+        let logURL  = self.logURL
+        let logsDir = self.logsDir
+        ioQueue.async { [weak self] in
+            // Recreate file and handle if deleted externally (e.g. in Finder)
+            if fh == nil || !FileManager.default.fileExists(atPath: logURL.path) {
+                try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: logURL.path, contents: nil)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: logURL.path)
+                if let newHandle = try? FileHandle(forWritingTo: logURL) {
+                    newHandle.seekToEndOfFile()
+                    newHandle.write(data)
+                    DispatchQueue.main.async { self?.fileHandle = newHandle }
+                    return
+                }
+            }
+            fh?.write(data)
+        }
     }
+
+  // MARK: - v2.0 Per-environment LogService
+
+  static func makeForEnvironment(id: UUID) -> LogService {
+    let logsDir = FileManager.default
+      .urls(for: .libraryDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("Logs/AxMJamfSync/environments", isDirectory: true)
+    try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+    let logURL = logsDir.appendingPathComponent("\(id.uuidString).log")
+    return LogService(logURL: logURL, logsDir: logsDir)
+  }
+
+  static func wipeEnvironmentLog(id: UUID) {
+    let logsDir = FileManager.default
+      .urls(for: .libraryDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("Logs/AxMJamfSync/environments", isDirectory: true)
+    let logURL = logsDir.appendingPathComponent("\(id.uuidString).log")
+    try? FileManager.default.removeItem(at: logURL)
+    for i in 1...5 {
+      let archive = logsDir.appendingPathComponent("\(id.uuidString).\(i).log")
+      try? FileManager.default.removeItem(at: archive)
+    }
+  }
 }
 
 // MARK: - String helper

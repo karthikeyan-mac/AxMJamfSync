@@ -121,7 +121,9 @@ struct AxMCredentialsPanel: View {
                     ForEach(AxMScope.allCases, id: \.self) { scope in
                         Button {
                             guard !scopeLocked else { return }
-                            let saved = KeychainService.loadAxMCredentials(for: scope)
+                            let saved = store.environmentId.map {
+                                KeychainService.loadAxMCredentialsForEnv(id: $0, scope: scope)
+                            } ?? KeychainService.loadAxMCredentials(for: scope)
                             store.axmCredentials = saved
                             store.axmAuthStatus  = .idle
                             prefs.activeScope = scope.rawValue
@@ -281,7 +283,9 @@ struct AxMCredentialsPanel: View {
         .onAppear {
             // Check Keychain directly — store.axmCredentials may be populated in-memory
             // without ever having been saved, which would wrongly enable the toggle.
-            let inKeychain = KeychainService.loadAxMCredentials(for: store.axmCredentials.scope)
+            let inKeychain = store.environmentId.map {
+                KeychainService.loadAxMCredentialsForEnv(id: $0, scope: store.axmCredentials.scope)
+            } ?? KeychainService.loadAxMCredentials(for: store.axmCredentials.scope)
             saveToKeychain = !inKeychain.clientId.isEmpty
         }
         .disabled(isRunning)
@@ -310,18 +314,21 @@ struct AxMCredentialsPanel: View {
     private func clearCreds() {
         let scope = store.axmCredentials.scope
         store.axmCredentials = AxMCredentials()
-        store.axmCredentials.scope = scope   // preserve scope so user stays on ABM or ASM
-        // Delete all keys for both scopes so a full clear leaves nothing behind
-        KeychainService.delete(for: .axmBizClientId)
-        KeychainService.delete(for: .axmBizKeyId)
+        store.axmCredentials.scope = scope
+        // Delete env-namespaced keys (v2.0 path)
+        if let envId = store.environmentId {
+            KeychainService.deleteForEnv(key: "axm.clientId",          envId: envId)
+            KeychainService.deleteForEnv(key: "axm.keyId",             envId: envId)
+            KeychainService.deleteForEnv(key: "axm.privateKeyContent", envId: envId)
+            KeychainService.deleteForEnv(key: "axm.scope",             envId: envId)
+        }
+        // Also delete v1 flat keys (no-op if already migrated, safety net otherwise)
+        KeychainService.delete(for: .axmBizClientId);    KeychainService.delete(for: .axmBizKeyId)
         KeychainService.delete(for: .axmBizPrivateKey)
-        KeychainService.delete(for: .axmSchoolClientId)
-        KeychainService.delete(for: .axmSchoolKeyId)
-        KeychainService.delete(for: .axmSchoolPrivateKey)
-        KeychainService.delete(for: .axmScope)
+        KeychainService.delete(for: .axmSchoolClientId); KeychainService.delete(for: .axmSchoolKeyId)
+        KeychainService.delete(for: .axmSchoolPrivateKey); KeychainService.delete(for: .axmScope)
         store.axmAuthStatus = .idle
-        saveToKeychain = false   // uncheck "Save to Keychain" after clearing
-        _ = scope  // suppress unused warning
+        saveToKeychain = false
     }
 }
 
@@ -449,7 +456,9 @@ struct JamfCredentialsPanel: View {
         .onAppear {
             // Check Keychain directly — store.jamfCredentials may be populated in-memory
             // without ever having been saved, which would wrongly enable the toggle.
-            let inKeychain = KeychainService.loadJamfCredentials()
+            let inKeychain = store.environmentId.map {
+                KeychainService.loadJamfCredentialsForEnv(id: $0)
+            } ?? KeychainService.loadJamfCredentials()
             saveToKeychain = !inKeychain.clientId.isEmpty
             // Sync local pageSize mirror from store (avoids Binding get/set cycle on macOS 26)
             pageSize = Double(store.jamfCredentials.pageSize)
@@ -460,10 +469,18 @@ struct JamfCredentialsPanel: View {
 
     private func clearCreds() {
         store.jamfCredentials = JamfCredentials()
+        // Delete env-namespaced keys (v2.0 path)
+        if let envId = store.environmentId {
+            KeychainService.deleteForEnv(key: "jamf.url",          envId: envId)
+            KeychainService.deleteForEnv(key: "jamf.clientId",     envId: envId)
+            KeychainService.deleteForEnv(key: "jamf.clientSecret", envId: envId)
+            KeychainService.deleteForEnv(key: "jamf.pageSize",     envId: envId)
+        }
+        // Also delete v1 flat keys
         KeychainService.delete(for: .jamfURL); KeychainService.delete(for: .jamfClientId)
         KeychainService.delete(for: .jamfClientSecret); KeychainService.delete(for: .jamfPageSize)
         store.jamfAuthStatus = .idle
-        saveToKeychain = false   // uncheck "Save to Keychain" after clearing
+        saveToKeychain = false
     }
 }
 
@@ -610,12 +627,9 @@ struct CacheSettingsPanel: View {
 
     private var scopeAbbrev: String { store.axmCredentials.scope == .school ? "ASM" : "ABM" }
 
-    /// Real on-disk path — read directly from the loaded persistent store
-    /// so it always matches where CoreData actually wrote the file.
+    /// Real on-disk path — read from the active environment's persistence controller.
     private var cacheURL: URL {
-        PersistenceController.shared.storeURL
-            ?? PersistenceController.shared.container
-                .persistentStoreCoordinator.persistentStores.first?.url
+        store.persistence.storeURL
             ?? FileManager.default
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("AxMJamfSync/AxMJamfSync.sqlite")

@@ -298,6 +298,19 @@ enum KeychainService {
         delete(for: tokenExpiryKey(for: scope))
     }
 
+    /// Clear the AxM token for a specific environment.
+    static func clearAxMTokenForEnv(id: UUID) {
+        deleteForEnv(key: "axm.accessToken",       envId: id)
+        deleteForEnv(key: "axm.accessTokenExpiry", envId: id)
+    }
+
+    /// Clear the Jamf token for a specific environment.
+    static func clearJamfTokenForEnv(id: UUID) {
+        deleteForEnv(key: "jamf.accessToken",       envId: id)
+        deleteForEnv(key: "jamf.accessTokenExpiry", envId: id)
+        deleteForEnv(key: "jamf.tokenTTL",          envId: id)
+    }
+
     // MARK: - Jamf access token persistence (S2)
     // JamfService previously cached tokens only in memory, losing them on every app restart.
     // These methods mirror the AxM token pattern so Jamf tokens survive across launches.
@@ -326,5 +339,156 @@ enum KeychainService {
     static func clearJamfToken() {
         delete(for: .jamfAccessToken)
         delete(for: .jamfAccessTokenExpiry)
+        delete(for: .jamfTokenTTL)
     }
+
+    // MARK: - v2.0 Environment-namespaced Keychain access
+
+    /// Save a value using an environment-namespaced account key.
+    /// Format: "env.{uuid}.{key}" stored as the kSecAttrAccount.
+    @discardableResult
+    static func saveForEnv(_ value: String, key: String, envId: UUID) -> Bool {
+        guard let data = value.data(using: .utf8) else { return false }
+        let account = "env.\(envId.uuidString).\(key)"
+        let query: [String: Any] = [
+            kSecClass                     as String: kSecClassGenericPassword,
+            kSecAttrService               as String: service,
+            kSecAttrAccount               as String: account,
+            kSecAttrSynchronizable        as String: false,
+            kSecUseDataProtectionKeychain as String: true,
+        ]
+        let attrs: [String: Any] = [kSecValueData as String: data]
+        let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = query
+            add[kSecValueData      as String] = data
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+        }
+        return status == errSecSuccess
+    }
+
+    static func loadForEnv(key: String, envId: UUID) -> String? {
+        let account = "env.\(envId.uuidString).\(key)"
+        let query: [String: Any] = [
+            kSecClass                     as String: kSecClassGenericPassword,
+            kSecAttrService               as String: service,
+            kSecAttrAccount               as String: account,
+            kSecAttrSynchronizable        as String: false,
+            kSecReturnData                as String: true,
+            kSecMatchLimit                as String: kSecMatchLimitOne,
+            kSecUseDataProtectionKeychain as String: true,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    @discardableResult
+    static func deleteForEnv(key: String, envId: UUID) -> Bool {
+        let account = "env.\(envId.uuidString).\(key)"
+        let query: [String: Any] = [
+            kSecClass                     as String: kSecClassGenericPassword,
+            kSecAttrService               as String: service,
+            kSecAttrAccount               as String: account,
+            kSecAttrSynchronizable        as String: false,
+            kSecUseDataProtectionKeychain as String: true,
+        ]
+        return SecItemDelete(query as CFDictionary) == errSecSuccess
+    }
+
+    /// Load credentials for a specific environment.
+    static func loadAxMCredentialsForEnv(id: UUID, scope: AxMScope) -> AxMCredentials {
+        var c = AxMCredentials()
+        c.scope             = scope
+        c.clientId          = loadForEnv(key: "axm.clientId",          envId: id) ?? ""
+        c.keyId             = loadForEnv(key: "axm.keyId",             envId: id) ?? ""
+        c.privateKeyContent = loadForEnv(key: "axm.privateKeyContent", envId: id) ?? ""
+        c.privateKeyPath    = ""
+        return c
+    }
+
+    static func saveAxMCredentialsForEnv(_ c: AxMCredentials, id: UUID) {
+        saveForEnv(c.scope.rawValue,    key: "axm.scope",           envId: id)
+        saveForEnv(c.clientId,          key: "axm.clientId",        envId: id)
+        saveForEnv(c.keyId,             key: "axm.keyId",           envId: id)
+        if !c.privateKeyContent.isEmpty {
+            saveForEnv(c.privateKeyContent, key: "axm.privateKeyContent", envId: id)
+        }
+    }
+
+    static func loadJamfCredentialsForEnv(id: UUID) -> JamfCredentials {
+        var c = JamfCredentials()
+        c.url          = loadForEnv(key: "jamf.url",          envId: id) ?? ""
+        c.clientId     = loadForEnv(key: "jamf.clientId",     envId: id) ?? ""
+        c.clientSecret = loadForEnv(key: "jamf.clientSecret", envId: id) ?? ""
+        let raw        = loadForEnv(key: "jamf.pageSize",      envId: id)
+        c.pageSize     = Int(raw ?? "1000") ?? 1000
+        return c
+    }
+
+    static func saveJamfCredentialsForEnv(_ c: JamfCredentials, id: UUID) {
+        saveForEnv(c.url,          key: "jamf.url",          envId: id)
+        saveForEnv(c.clientId,     key: "jamf.clientId",     envId: id)
+        saveForEnv(c.clientSecret, key: "jamf.clientSecret", envId: id)
+        saveForEnv(String(c.pageSize), key: "jamf.pageSize", envId: id)
+    }
+
+    // MARK: - v2.0 Migration: copy v1 flat keys into env namespace
+
+    /// Step 1 of migration: copy v1 flat Keychain credentials to env-namespaced keys.
+    /// v1 flat keys are NOT deleted here — call deleteV1KeychainKeys() only after
+    /// the entire migration (CoreData + UserDefaults) completes successfully.
+    static func migrateToEnvironment(id: UUID, scope: AxMScope) {
+        if let v = load(for: scope == .school ? .axmSchoolClientId  : .axmBizClientId),  !v.isEmpty { saveForEnv(v, key: "axm.clientId",          envId: id) }
+        if let v = load(for: scope == .school ? .axmSchoolKeyId     : .axmBizKeyId),     !v.isEmpty { saveForEnv(v, key: "axm.keyId",             envId: id) }
+        if let v = load(for: scope == .school ? .axmSchoolPrivateKey : .axmBizPrivateKey),!v.isEmpty { saveForEnv(v, key: "axm.privateKeyContent", envId: id) }
+        if let v = load(for: .jamfURL),          !v.isEmpty { saveForEnv(v,              key: "jamf.url",          envId: id) }
+        if let v = load(for: .jamfClientId),     !v.isEmpty { saveForEnv(v,              key: "jamf.clientId",     envId: id) }
+        if let v = load(for: .jamfClientSecret), !v.isEmpty { saveForEnv(v,              key: "jamf.clientSecret", envId: id) }
+        if let v = load(for: .jamfPageSize),     !v.isEmpty { saveForEnv(v,              key: "jamf.pageSize",     envId: id) }
+        saveForEnv(scope.rawValue, key: "axm.scope", envId: id)
+    }
+
+    /// Step 2 of migration: delete v1 flat keys after full migration completes.
+    /// Separated from migrateToEnvironment() so there is a rollback window.
+    static func deleteV1KeychainKeys() {
+        delete(for: .axmBizClientId);    delete(for: .axmBizKeyId);    delete(for: .axmBizPrivateKey)
+        delete(for: .axmSchoolClientId); delete(for: .axmSchoolKeyId); delete(for: .axmSchoolPrivateKey)
+        delete(for: .jamfURL);           delete(for: .jamfClientId);   delete(for: .jamfClientSecret)
+        delete(for: .jamfPageSize);      delete(for: .axmScope)
+        delete(for: .axmBizToken);       delete(for: .axmBizTokenExpiry)
+        delete(for: .axmSchoolToken);    delete(for: .axmSchoolTokenExpiry)
+        delete(for: .jamfAccessToken);   delete(for: .jamfAccessTokenExpiry); delete(for: .jamfTokenTTL)
+    }
+
+    // MARK: - v2.0 Wipe all Keychain items for an environment
+
+    static func wipeEnvironment(id: UUID) {
+        let prefix = "env.\(id.uuidString)."
+        // Query all generic password items for this service
+        let query: [String: Any] = [
+            kSecClass                     as String: kSecClassGenericPassword,
+            kSecAttrService               as String: service,
+            kSecReturnAttributes          as String: true,
+            kSecMatchLimit                as String: kSecMatchLimitAll,
+            kSecUseDataProtectionKeychain as String: true,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else { return }
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  account.hasPrefix(prefix) else { continue }
+            let del: [String: Any] = [
+                kSecClass                     as String: kSecClassGenericPassword,
+                kSecAttrService               as String: service,
+                kSecAttrAccount               as String: account,
+                kSecUseDataProtectionKeychain as String: true,
+            ]
+            SecItemDelete(del as CFDictionary)
+        }
+    }
+
 }

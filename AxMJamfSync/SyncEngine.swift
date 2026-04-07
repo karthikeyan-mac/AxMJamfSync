@@ -48,7 +48,10 @@ final class SyncEngine: ObservableObject {
     @Published var lastRunFromCache:   Int     = 0   // devices served from cache
     @Published var lastRunElapsedSecs: Int     = 0
 
-    private let log = LogService.shared
+    // Per-environment log — injected by EnvironmentStore.buildServices().
+    var log: LogService = LogService.shared
+    // Called at sync start/end so EnvironmentStore can update sidebar status.
+    var onSyncStatusChange: ((EnvironmentSyncStatus, Date?) -> Void)?
     private var syncTask:  Task<Void, Never>?
     private var activeABM:  ABMService?  = nil
     private var activeJamf: JamfService? = nil
@@ -146,6 +149,7 @@ final class SyncEngine: ObservableObject {
         lastError   = nil
         phase       = .idle
         currentStep = 0
+        onSyncStatusChange?(.running, nil)
         totalSteps  = 1
         store.suppressAutoReload = true   // SyncEngine controls reload timing during sync
         log.clearSession()
@@ -166,11 +170,11 @@ final class SyncEngine: ObservableObject {
         log.debug("APP VERSION  \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))")
         log.debug("── Scope & Credentials ─────────────────────────────────")
         log.debug("Scope          : \(axmCreds.scope == .school ? "ASM (Apple School Manager)" : "ABM (Apple Business Manager)")")
-        log.debug("AxM Client ID  : \(axmCreds.clientId.isEmpty ? "(not set)" : "\(axmCreds.clientId.prefix(8))…")")
-        log.debug("AxM Key ID     : \(axmCreds.keyId.isEmpty ? "(not set)" : "\(axmCreds.keyId.prefix(8))…")")
+        log.debug("AxM Client ID  : \(axmCreds.clientId.isEmpty ? "(not set)" : "(set)")")
+        log.debug("AxM Key ID     : \(axmCreds.keyId.isEmpty ? "(not set)" : "(set)")")
         log.debug("AxM Private Key: \(axmCreds.privateKeyContent.isEmpty ? "(not set)" : "set (\(axmCreds.privateKeyContent.count) chars)")")
         log.debug("Jamf URL       : \(jamfCreds.url.isEmpty ? "(not set)" : jamfCreds.url)")
-        log.debug("Jamf Client ID : \(jamfCreds.clientId.isEmpty ? "(not set)" : "\(jamfCreds.clientId.prefix(8))…")")
+        log.debug("Jamf Client ID : \(jamfCreds.clientId.isEmpty ? "(not set)" : "(set)")")
         log.debug("Jamf Secret    : \(jamfCreds.clientSecret.isEmpty ? "(not set)" : "set (\(jamfCreds.clientSecret.count) chars)")")
         log.debug("── Cache Settings ──────────────────────────────────────")
         log.debug("Device Cache Days      : \(prefs.devicesCacheDays) day(s)  [\(prefs.alwaysRefreshDevices ? "ALWAYS REFRESH — cache days ignored" : "respect cache")]")
@@ -1154,6 +1158,7 @@ final class SyncEngine: ObservableObject {
 
             phase    = .done
             tabBadge = ""
+            onSyncStatusChange?(.success, Date())
             SyncNotificationService.sendCompletion(
                 devices: store.devices.count,
                 coverage: runCoverageCount,
@@ -1213,6 +1218,7 @@ final class SyncEngine: ObservableObject {
         } catch is CancellationError {
             phase     = .idle
             stepLabel = "Stopped."
+            onSyncStatusChange?(.error, Date())
             log.warn("Sync cancelled by user.")
 
             // ── Persist last run summary for stop-sync so UI reflects actual work done ──
@@ -1516,7 +1522,6 @@ private func mergeDevicesOffActor(
                 // a blank or mismatched value for any field we write — re-queue to restore.
                 // Covers: warrantyDate cleared, vendor changed, poNumber/poDate cleared.
                 let wasWritten = existingBySerial[c.serialNumber]?.wbStatus == .synced
-                let ex_c = existingBySerial[c.serialNumber]
                 let expectedVendor: String? = {
                     guard let src = sd.axmPurchaseSource, !src.isEmpty else { return nil }
                     if let sid = sd.axmPurchaseSourceId, !sid.isEmpty { return "\(src) (\(sid))" }
@@ -1628,7 +1633,6 @@ private func mergeDevicesOffActor(
                 // a blank or mismatched value for any field we write — re-queue to restore.
                 // Covers: warrantyDate cleared, vendor changed, poNumber/poDate cleared.
                 let wasWritten = existingBySerial[m.serialNumber]?.wbStatus == .synced
-                let ex_m = existingBySerial[m.serialNumber]
                 let expectedVendorMob: String? = {
                     guard let src = sd.axmPurchaseSource, !src.isEmpty else { return nil }
                     if let sid = sd.axmPurchaseSourceId, !sid.isEmpty { return "\(src) (\(sid))" }

@@ -328,7 +328,7 @@ struct DashboardStats {
 }
 
 // MARK: - AxM Scope
-enum AxMScope: String, CaseIterable {
+enum AxMScope: String, CaseIterable, Codable {
     case business = "business.api"
     case school   = "school.api"
 

@@ -168,7 +168,9 @@ actor ABMService {
         // ── Credential diagnostics ────────────────────────────────────────────
         Task { @MainActor in
             let log = LogService.shared
-            log.debug("[\(scopeLabel)] Credentials loaded — clientId: \(credentials.clientId.prefix(8))… keyId: \(credentials.keyId.prefix(8))… scope: \(credentials.scope.rawValue)")
+            let cidStatus = credentials.clientId.isEmpty  ? "missing" : "present"
+            let kidStatus = credentials.keyId.isEmpty     ? "missing" : "present"
+            log.debug("[\(scopeLabel)] Credentials — clientId: \(cidStatus) keyId: \(kidStatus) scope: \(credentials.scope.rawValue)")
             log.debug("[\(scopeLabel)] Base URL: \(credentials.scope.baseURL)")
             let hasKey = !credentials.privateKeyContent.isEmpty
             log.debug("[\(scopeLabel)] Private key: \(hasKey ? "present (\(credentials.privateKeyContent.count) chars)" : "⚠ MISSING — auth will fail")")

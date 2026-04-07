@@ -20,12 +20,14 @@ import CoreData
 final class AppStore: ObservableObject {
 
     // MARK: - Dependencies
-    let persistence: PersistenceController
-    let prefs:       AppPreferences
+    let persistence:   PersistenceController
+    let prefs:         AppPreferences
+    /// Non-nil when running in multi-environment mode (v2.0+).
+    let environmentId: UUID?
 
     // MARK: - Credentials
-    @Published var axmCredentials:  AxMCredentials  = KeychainService.loadAxMCredentials()
-    @Published var jamfCredentials: JamfCredentials = KeychainService.loadJamfCredentials()
+    @Published var axmCredentials:  AxMCredentials
+    @Published var jamfCredentials: JamfCredentials
 
     // MARK: - Device data
     @Published var devices:         [Device]        = []   // full list, main thread
@@ -59,9 +61,14 @@ final class AppStore: ObservableObject {
     var suppressAutoReload: Bool = false
 
     // MARK: - Init
-    init(persistence: PersistenceController = .shared, prefs: AppPreferences? = nil) {
-        self.persistence = persistence
-        self.prefs       = prefs ?? AppPreferences()
+    /// Placeholder init — uses an in-memory store so it never accidentally
+    /// opens the v1 shared store. Replaced by buildServices() in EnvironmentStore.
+    init(persistence: PersistenceController = PersistenceController(inMemory: true), prefs: AppPreferences? = nil) {
+        self.persistence   = persistence
+        self.prefs         = prefs ?? AppPreferences()
+        self.environmentId = nil
+        self.axmCredentials  = KeychainService.loadAxMCredentials()
+        self.jamfCredentials = KeychainService.loadJamfCredentials()
 
         let saved = self.prefs.loadExportColumnEnabled()
         exportColumns = ExportColumn.defaultColumns.map { col in
@@ -125,6 +132,36 @@ final class AppStore: ObservableObject {
             corrected.scope = persistedScope
             axmCredentials = corrected
         }
+    }
+
+
+    /// Per-environment init (v2.0) — uses isolated PersistenceController, AppPreferences,
+    /// and credentials keyed by environment UUID.
+    init(environment: AppEnvironment, persistence: PersistenceController, prefs: AppPreferences) {
+        self.persistence   = persistence
+        self.prefs         = prefs
+        self.environmentId = environment.id
+
+        self.axmCredentials  = KeychainService.loadAxMCredentialsForEnv(id: environment.id, scope: environment.scope)
+        self.jamfCredentials = KeychainService.loadJamfCredentialsForEnv(id: environment.id)
+
+        let saved = prefs.loadExportColumnEnabled()
+        exportColumns = ExportColumn.defaultColumns.map { col in
+            var c = col; if let on = saved[col.id] { c.enabled = on }; return c
+        }
+
+        let ctx       = persistence.viewContext
+        let countReq  = NSFetchRequest<NSNumber>(entityName: "CDDevice")
+        countReq.resultType = .countResultType
+        let syncCount = (try? ctx.count(for: countReq)) ?? 0
+        cacheIsPopulated = syncCount > 0
+
+        if syncCount > 0 && prefs.dataCachedScope.isEmpty {
+            prefs.dataCachedScope = environment.scope.rawValue
+        }
+
+        loadDevicesFromCoreData()
+        recomputeStats()
     }
 
     // MARK: - CoreData load (throttled — at most once per 0.5s)
@@ -263,9 +300,14 @@ final class AppStore: ObservableObject {
     func wipeCache() async {
         await persistence.deleteAllDevices()
         prefs.resetSyncTimestamps()
-        prefs.activeScope      = AxMScope.business.rawValue  // reset to default after wipe
-        prefs.dataCachedScope  = ""                          // release scope lock
-        KeychainService.save(AxMScope.business.rawValue, for: .axmScope)  // sync Keychain scope too
+        prefs.activeScope     = AxMScope.business.rawValue
+        prefs.dataCachedScope = ""   // release scope lock
+        // Write scope reset to env-namespaced key in v2, flat key in v1
+        if let envId = environmentId {
+            KeychainService.saveForEnv(AxMScope.business.rawValue, key: "axm.scope", envId: envId)
+        } else {
+            KeychainService.save(AxMScope.business.rawValue, for: .axmScope)
+        }
         hasData            = false
         cacheIsPopulated   = false
         devices            = []
@@ -392,13 +434,20 @@ final class AppStore: ObservableObject {
     }
 
     // MARK: - Credentials
-    func saveAxMCredentials()  {
-        KeychainService.saveAxMCredentials(axmCredentials)
-        // NOTE: prefs.activeScope is intentionally NOT updated here.
-        // activeScope tracks the UI selection; dataCachedScope is the authoritative
-        // lock source and is only written by SyncEngine after data is persisted.
+    func saveAxMCredentials() {
+        if let envId = environmentId {
+            KeychainService.saveAxMCredentialsForEnv(axmCredentials, id: envId)
+        } else {
+            KeychainService.saveAxMCredentials(axmCredentials)
+        }
     }
-    func saveJamfCredentials() { KeychainService.saveJamfCredentials(jamfCredentials) }
+    func saveJamfCredentials() {
+        if let envId = environmentId {
+            KeychainService.saveJamfCredentialsForEnv(jamfCredentials, id: envId)
+        } else {
+            KeychainService.saveJamfCredentials(jamfCredentials)
+        }
+    }
 
     // MARK: - Export columns
     func saveExportColumns() { prefs.saveExportColumns(exportColumns) }
@@ -424,7 +473,7 @@ final class AppStore: ObservableObject {
     func testJamfAuth() async {
         jamfAuthStatus = .testing
         do {
-            try await Task.sleep(nanoseconds: 1_500_000_000)
+
             guard !jamfCredentials.url.isEmpty,
                   !jamfCredentials.clientId.isEmpty,
                   !jamfCredentials.clientSecret.isEmpty else {

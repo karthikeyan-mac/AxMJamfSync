@@ -50,6 +50,9 @@ final class PersistenceController: Sendable {
     }
 
     // MARK: - Init
+
+    /// Default init — uses legacy single-env store (AxMJamfSync.sqlite).
+    /// Used only for the Default (v1-migrated) environment.
     init(inMemory: Bool = false) {
         container = NSPersistentContainer(name: "AxMJamfSync")
 
@@ -104,17 +107,170 @@ final class PersistenceController: Sendable {
         purgeHistoryTransactions()
     }
 
+    /// Per-environment init — each environment gets its own isolated SQLite file.
+    /// New environments start with an empty store. Only the Default environment
+    /// (00000000-0000-0000-0000-000000000001) migrates data from v1 on first launch.
+    convenience init(environmentId: UUID) {
+        let fm = FileManager.default
+        let envDir   = PersistenceController.environmentsDirectory
+        try? fm.createDirectory(at: envDir, withIntermediateDirectories: true)
+        let storeURL = envDir.appendingPathComponent("\(environmentId.uuidString).sqlite")
+
+        // Normal launch — store already exists, open it directly.
+        if fm.fileExists(atPath: storeURL.path) {
+            self.init(storeURL: storeURL)
+            return
+        }
+
+        // First v2.0 launch for the Default environment — copy v1 data.
+        let defaultId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        if environmentId == defaultId {
+            PersistenceController.copyV1Store(to: storeURL)
+        }
+
+        self.init(storeURL: storeURL)
+    }
+
+    /// Copies the v1 SQLite store to the destination URL.
+    ///
+    /// Strategy: open the v1 store via NSPersistentContainer (which forces a WAL
+    /// checkpoint, flushing all pending writes into the main .sqlite file), then
+    /// copy the .sqlite, -wal, and -shm files directly. Direct file copy is more
+    /// reliable than migratePersistentStore across different option sets.
+    private static func copyV1Store(to destURL: URL) {
+        // Step 1: open v1 store to force WAL checkpoint
+        let tempContainer = NSPersistentContainer(name: "AxMJamfSync")
+        guard let desc = tempContainer.persistentStoreDescriptions.first else {
+            os_log(.error, "[CoreData] copyV1Store: no store description found")
+            return
+        }
+        desc.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+        desc.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+        desc.shouldMigrateStoreAutomatically     = true
+        desc.shouldInferMappingModelAutomatically = true
+
+        var v1URL: URL? = nil
+        var loadError: Error? = nil
+        tempContainer.loadPersistentStores { _, error in
+            if let error { loadError = error; return }
+            v1URL = tempContainer.persistentStoreCoordinator.persistentStores.first?.url
+        }
+
+        if let loadError {
+            os_log(.error, "[CoreData] copyV1Store: failed to load v1 store — %{public}@",
+                   loadError.localizedDescription)
+            return
+        }
+        guard let v1URL else {
+            os_log(.error, "[CoreData] copyV1Store: could not resolve v1 store URL")
+            return
+        }
+
+        // Step 2: checkpoint WAL by closing all contexts cleanly
+        // Setting persistentStoreCoordinator to a fresh one forces SQLite to flush
+        try? tempContainer.persistentStoreCoordinator.remove(
+            tempContainer.persistentStoreCoordinator.persistentStores.first!
+        )
+
+        // Step 3: copy .sqlite, -wal, -shm to destination
+        let fm = FileManager.default
+        var copied = false
+        for ext in ["", "-wal", "-shm"] {
+            let src = URL(fileURLWithPath: v1URL.path + ext)
+            let dst = URL(fileURLWithPath: destURL.path + ext)
+            guard fm.fileExists(atPath: src.path) else { continue }
+            do {
+                if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
+                try fm.copyItem(at: src, to: dst)
+                if ext.isEmpty { copied = true }
+            } catch {
+                os_log(.error, "[CoreData] copyV1Store: copy failed for %{public}@ — %{public}@",
+                       ext.isEmpty ? ".sqlite" : ext, error.localizedDescription)
+            }
+        }
+
+        if copied {
+            os_log(.default, "[CoreData] v1 store copied to %{public}@", destURL.lastPathComponent)
+        }
+    }
+
+    /// Returns the directory where all per-environment SQLite stores live.
+    /// Derived from the sandbox-resolved Application Support path so it always
+    /// lands inside the correct container on sandboxed builds.
+    /// Cached sandbox-resolved path for environment stores.
+    /// Computed once at app launch via NSPersistentContainer default URL resolution.
+    static let environmentsDirectory: URL = {
+        let probe = NSPersistentContainer(name: "AxMJamfSync")
+        if let desc = probe.persistentStoreDescriptions.first, let url = desc.url {
+            return url.deletingLastPathComponent().appendingPathComponent("environments", isDirectory: true)
+        }
+        return FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AxM Jamf Sync/environments", isDirectory: true)
+    }()
+
+    /// Internal init for a specific store URL.
+    init(storeURL: URL) {
+        container = NSPersistentContainer(name: "AxMJamfSync")
+        let desc  = NSPersistentStoreDescription(url: storeURL)
+        desc.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+        desc.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+        desc.shouldMigrateStoreAutomatically      = true
+        desc.shouldInferMappingModelAutomatically  = true
+        container.persistentStoreDescriptions = [desc]
+
+        container.loadPersistentStores { _, error in
+            if let error {
+                os_log(.fault, "[CoreData] Failed to load store at %{public}@ — %{public}@",
+                       storeURL.lastPathComponent, error.localizedDescription)
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .persistenceLoadFailed,
+                                                    object: error.localizedDescription)
+                }
+            }
+        }
+        container.viewContext.automaticallyMergesChangesFromParent = true
+        container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+        container.viewContext.name        = "viewContext"
+        purgeHistoryTransactions()
+    }
+
+    // MARK: - v2.0 Environment wipe
+
+    /// Delete the SQLite store files for an environment (called on environment deletion).
+    static func wipeEnvironment(id: UUID) {
+        let envDir   = PersistenceController.environmentsDirectory
+        let storeURL = envDir.appendingPathComponent("\(id.uuidString).sqlite")
+        for ext in ["", "-wal", "-shm"] {
+            let path = storeURL.path + ext
+            if FileManager.default.fileExists(atPath: path) {
+                try? FileManager.default.removeItem(atPath: path)
+            }
+        }
+    }
+
     // MARK: - Persistent history cleanup
     /// Delete NSPersistentHistoryTransaction records older than 24 hours.
     /// Safe to call from any context — uses a throw-away background context.
     func purgeHistoryTransactions() {
+        // Skip inMemory stores — they have no history tracking and no persistent URL.
+        guard let storeURL = container.persistentStoreCoordinator.persistentStores.first?.url,
+              storeURL.path != "/dev/null" else { return }
+
+        // Only purge once per day per store file.
+        let lastPurgeKey = "coredata.lastHistoryPurge.\(storeURL.lastPathComponent)"
+        let ud  = UserDefaults.standard
+        let now = Date().timeIntervalSince1970
+        guard now - ud.double(forKey: lastPurgeKey) > 86_400 else { return }
+
         let yesterday = Date().addingTimeInterval(-86_400)
         let purgeReq  = NSPersistentHistoryChangeRequest.deleteHistory(before: yesterday)
         let bgCtx     = container.newBackgroundContext()
         bgCtx.perform {
             do {
                 try bgCtx.execute(purgeReq)
-                os_log(.default, "[CoreData] Persistent history purged.")
+                ud.set(now, forKey: lastPurgeKey)
+                os_log(.debug, "[CoreData] Persistent history purged for %{public}@.", storeURL.lastPathComponent)
             } catch {
                 os_log(.error, "[CoreData] History purge error: %{public}@", error.localizedDescription)
             }

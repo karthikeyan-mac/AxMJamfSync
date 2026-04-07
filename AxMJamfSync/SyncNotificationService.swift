@@ -6,6 +6,7 @@
 import Foundation
 import UserNotifications
 import AppKit
+import os
 
 enum SyncNotificationService {
 
@@ -52,7 +53,7 @@ enum SyncNotificationService {
             trigger:    nil   // deliver immediately
         )
         UNUserNotificationCenter.current().add(req) { err in
-            if let err { print("[Notification] error: \(err)") }
+            if let err { os_log(.error, "[Notification] error: %{public}@", err.localizedDescription) }
         }
     }
 
