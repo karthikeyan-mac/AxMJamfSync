@@ -98,6 +98,32 @@ private struct ABMCoverageAttributes: Decodable {
     let contractCancelDateTime:   String?
 }
 
+// MARK: - MDM Server response types
+
+private struct ABMMdmServerListResponse: Decodable {
+    let data: [ABMMdmServerRecord]
+    let meta: ABMMeta?
+}
+
+private struct ABMMdmServerRecord: Decodable {
+    let id:         String
+    let attributes: ABMMdmServerAttributes
+}
+
+private struct ABMMdmServerAttributes: Decodable {
+    let serverName: String?
+    let serverType: String?   // "MDM" | "APPLE_CONFIGURATOR"
+}
+
+private struct ABMMdmDeviceLinkResponse: Decodable {
+    let data: [ABMMdmDeviceLink]
+    let meta: ABMMeta?
+}
+
+private struct ABMMdmDeviceLink: Decodable {
+    let id: String   // serial number
+}
+
 // MARK: - ABMService
 
 /// File-scope factory — Swift does not allow `Self` in stored property initialisers.
@@ -438,7 +464,97 @@ actor ABMService {
         return DeviceCoverage(status: status, endDate: endDate, agreement: attrs.agreementNumber, rawJson: data)
     }
 
-    // MARK: - Token management
+    // MARK: - Public: fetch all MDM servers
+
+    /// Fetches all MDM/Apple Configurator servers registered in the org.
+    /// Returns an array of RawMdmServer (id, name, type). Never throws — returns
+    /// empty on failure so the sync pipeline can continue without MDM data.
+    func fetchMdmServers() async -> [RawMdmServer] {
+        let scopeLabel = scope == .school ? "ASM" : "ABM"
+        var results: [RawMdmServer] = []
+        var cursor: String? = nil
+
+        repeat {
+            guard let token = try? await validToken() else {
+                await LogService.shared.error("[\(scopeLabel)] MDM servers: token unavailable.")
+                return results
+            }
+            guard var components = URLComponents(string: baseURL + "/v1/mdmServers") else {
+                return results
+            }
+            var queryItems = [URLQueryItem(name: "limit", value: "1000")]
+            if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
+            components.queryItems = queryItems
+            guard let url = components.url else { return results }
+
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json",  forHTTPHeaderField: "Accept")
+
+            guard let (data, response) = try? await session.data(for: request),
+                  let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                await LogService.shared.warn("[\(scopeLabel)] MDM servers: HTTP error — skipping.")
+                return results
+            }
+            guard let decoded = try? JSONDecoder().decode(ABMMdmServerListResponse.self, from: data) else {
+                await LogService.shared.warn("[\(scopeLabel)] MDM servers: JSON decode failed.")
+                return results
+            }
+            for record in decoded.data {
+                results.append(RawMdmServer(
+                    id:         record.id,
+                    serverName: record.attributes.serverName ?? "",
+                    serverType: record.attributes.serverType ?? "MDM"
+                ))
+            }
+            cursor = decoded.meta?.paging?.nextCursor
+        } while cursor != nil
+
+        await LogService.shared.info("[\(scopeLabel)] MDM servers: fetched \(results.count) server(s).")
+        return results
+    }
+
+    /// Fetches all device serial numbers (orgDevice IDs) assigned to one MDM server.
+    /// Returns a Set<String> of serial numbers for O(1) lookup during device merge.
+    func fetchMdmServerDeviceIds(serverId: String) async -> Set<String> {
+        let scopeLabel = scope == .school ? "ASM" : "ABM"
+        var serials = Set<String>()
+        var cursor: String? = nil
+
+        repeat {
+            guard let token = try? await validToken() else { return serials }
+            guard var components = URLComponents(
+                string: baseURL + "/v1/mdmServers/\(serverId)/relationships/devices"
+            ) else { return serials }
+            var queryItems = [URLQueryItem(name: "limit", value: "1000")]
+            if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
+            components.queryItems = queryItems
+            guard let url = components.url else { return serials }
+
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json",  forHTTPHeaderField: "Accept")
+
+            guard let (data, response) = try? await session.data(for: request),
+                  let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                await LogService.shared.warn("[\(scopeLabel)] MDM server \(serverId.prefix(8)): HTTP error fetching devices.")
+                return serials
+            }
+            guard let decoded = try? JSONDecoder().decode(ABMMdmDeviceLinkResponse.self, from: data) else {
+                return serials
+            }
+            for link in decoded.data {
+                serials.insert(link.id.uppercased())
+            }
+            cursor = decoded.meta?.paging?.nextCursor
+        } while cursor != nil
+
+        return serials
+    }
+
+
 
     /// Recreate the coverage URL session — call after a -1005 (connection reset) error
     /// so the retry uses a fresh TCP/HTTP2 connection rather than the broken one.
@@ -516,13 +632,14 @@ actor ABMService {
         if let http = response as? HTTPURLResponse {
             let scopeLabel = baseURL.contains("school") ? "ASM" : "ABM"
             if http.statusCode == 400 {
-                let body = String(data: data, encoding: .utf8) ?? "<no body>"
-                await LogService.shared.error("[\(scopeLabel)] Token endpoint HTTP 400 — bad request. Check clientId/keyId/scope. Response: \(body)")
+                // Do not log response body — Apple's 400 can echo back the client_assertion JWT
+                // which contains the clientId. Log the status only.
+                await LogService.shared.error("[\(scopeLabel)] Token endpoint HTTP 400 — bad request. Check clientId/keyId/scope in Setup.")
                 throw ABMError.authError("HTTP 400 — check clientId/keyId/scope")
             }
             if http.statusCode == 401 {
-                let body = String(data: data, encoding: .utf8) ?? "<no body>"
-                await LogService.shared.error("[\(scopeLabel)] Token endpoint HTTP 401 — client assertion rejected. Check private key matches keyId. Response: \(body)")
+                // Do not log response body — may contain echoed client_assertion fragments.
+                await LogService.shared.error("[\(scopeLabel)] Token endpoint HTTP 401 — client assertion rejected. Check private key matches keyId in Setup.")
                 throw ABMError.authError("HTTP 401 — client assertion rejected; check private key and keyId")
             }
             if http.statusCode == 429 {
@@ -535,7 +652,6 @@ actor ABMService {
                 // Strategy: honour Retry-After if the server sends one; otherwise back
                 // off 30s and try once more. If the second attempt also 429s, throw so
                 // the caller can surface a clear message rather than looping.
-                let body = String(data: data, encoding: .utf8) ?? "<no body>"
                 let retryAfter: TimeInterval
                 if let ra = http.value(forHTTPHeaderField: "Retry-After"),
                    let secs = Double(ra) {
@@ -543,14 +659,12 @@ actor ABMService {
                 } else {
                     retryAfter = 30   // conservative default
                 }
-                await LogService.shared.warn("[\(scopeLabel)] Token endpoint HTTP 429. Response: \(body)")
-                await LogService.shared.warn("[\(scopeLabel)] Rate-limited — waiting \(Int(retryAfter))s then retrying once…")
+                await LogService.shared.warn("[\(scopeLabel)] Token endpoint HTTP 429 — rate limited. Waiting \(Int(retryAfter))s then retrying once…")
                 try await Task.sleep(nanoseconds: UInt64(retryAfter * 1_000_000_000))
                 // Single retry after backoff
                 let (retryData, retryResponse) = try await session.data(for: request)
                 if let retryHTTP = retryResponse as? HTTPURLResponse, retryHTTP.statusCode == 429 {
-                    let retryBody = String(data: retryData, encoding: .utf8) ?? "<no body>"
-                    await LogService.shared.error("[\(scopeLabel)] Token endpoint still 429 after retry. Response: \(retryBody)")
+                    await LogService.shared.error("[\(scopeLabel)] Token endpoint still 429 after retry. Wait a few minutes and try again.")
                     throw ABMError.authError("HTTP 429 — token endpoint still rate-limited after \(Int(retryAfter))s backoff. Wait a few minutes and try again.")
                 }
                 try validateHTTP(retryResponse, context: "ABM token endpoint (retry)")
@@ -559,8 +673,8 @@ actor ABMService {
                 return (retryDecoded.access_token, retryDecoded.expires_in)
             }
             if !(200..<300).contains(http.statusCode) {
-                let body = String(data: data, encoding: .utf8) ?? "<no body>"
-                await LogService.shared.error("[\(scopeLabel)] Token endpoint HTTP \(http.statusCode). Response: \(body)")
+                // Do not log response body — token endpoint errors may echo credential fragments.
+                await LogService.shared.error("[\(scopeLabel)] Token endpoint HTTP \(http.statusCode) — check credentials in Setup.")
             }
         }
         try validateHTTP(response, context: "ABM token endpoint")
@@ -671,24 +785,28 @@ actor ABMService {
         }
     }
 
-    /// Extended version that also logs the response body on error — use at call sites
-    /// where `data` is already in scope.
+    /// Extended version that logs the HTTP status on error.
+    /// Response body is intentionally not logged — API error responses may contain
+    /// echoed credential fragments (client_assertion, clientId) from the token endpoint.
     func validateHTTP(_ response: URLResponse, data: Data, context: String) async throws {
         guard let http = response as? HTTPURLResponse else {
             await LogService.shared.error("[\(context)] No HTTP response received.")
             throw ABMError.networkError("\(context): no HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let body = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .prefix(500) ?? "<no body>"
-            await LogService.shared.error("[\(context)] HTTP \(http.statusCode) — \(body)")
+            await LogService.shared.error("[\(context)] HTTP \(http.statusCode).")
             throw ABMError.httpError(context: context, statusCode: http.statusCode)
         }
     }
 }
 
 // MARK: - Output types (Sendable — cross actor boundaries safely)
+
+struct RawMdmServer: Sendable {
+    let id:         String
+    let serverName: String
+    let serverType: String   // "MDM" | "APPLE_CONFIGURATOR"
+}
 
 struct RawABMDevice: Sendable {
     let deviceId:           String

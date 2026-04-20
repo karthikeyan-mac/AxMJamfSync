@@ -339,7 +339,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
 				PRODUCT_NAME = "AxM Jamf Sync";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -371,7 +371,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
 				PRODUCT_NAME = "AxM Jamf Sync";
 				SWIFT_EMIT_LOC_STRINGS = YES;

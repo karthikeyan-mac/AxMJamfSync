@@ -461,6 +461,9 @@ extension CDDevice {
         jamfFileVaultStatus = d.jamfFileVaultStatus
         jamfUsername        = d.jamfUsername
         jamfDeviceType      = d.jamfDeviceType
+        assignedMdmServerId   = d.assignedMdmServerId
+        assignedMdmServerName = d.assignedMdmServerName
+        mdmServerType         = d.mdmServerType
 
         // Raw Apple API JSON — only overwrite when the incoming value is non-nil
         // so a Jamf-only merge pass doesn't null out previously stored Apple blobs.
@@ -516,6 +519,9 @@ extension CDDevice {
             jamfFileVaultStatus:  jamfFileVaultStatus,
             jamfUsername:         jamfUsername,
             jamfDeviceType:       jamfDeviceType,
+            assignedMdmServerId:  assignedMdmServerId,
+            assignedMdmServerName: assignedMdmServerName,
+            mdmServerType:        mdmServerType,
             axmRawJson:           axmRawJson,
             axmCoverageRawJson:   axmCoverageRawJson
         )

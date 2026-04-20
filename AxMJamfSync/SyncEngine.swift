@@ -47,6 +47,8 @@ final class SyncEngine: ObservableObject {
     @Published var lastRunWBFailedMob: Int     = 0   // Mobile write-back failures
     @Published var lastRunFromCache:   Int     = 0   // devices served from cache
     @Published var lastRunElapsedSecs: Int     = 0
+    @Published var lastRunMdmServers:  Int     = 0   // MDM servers found in Step 1b
+    @Published var lastRunMdmAssigned: Int     = 0   // devices assigned to an MDM server
 
     // Per-environment log — injected by EnvironmentStore.buildServices().
     var log: LogService = LogService.shared
@@ -221,6 +223,8 @@ final class SyncEngine: ObservableObject {
         var rawABM:    [RawABMDevice]         = []
         var rawJamf:   [RawJamfComputer]      = []
         var rawMobile: [RawJamfMobileDevice]  = []
+        // serial → (serverId, serverName, serverType) — built after orgDevices fetch
+        var mdmServerLookup: [String: RawMdmServer] = [:]
         // Declared outside do{} so the CancellationError handler can flush whatever
         // partial coverage batch was in-flight when the user pressed Stop.
         var covBatch:  [Device]               = []
@@ -343,6 +347,45 @@ final class SyncEngine: ObservableObject {
                         log.info("AxM: fetched \(rawABM.count) devices across \(pages) page(s) this run.")
                     }
                 }
+            }
+
+            // ── Step 1b: MDM Server → Device lookup ──────────────────
+            // Only runs when orgDevices fetched fresh data this run (rawABM non-empty).
+            // Respects Device Cache (days): if AxM cache is fresh, rawABM is empty and
+            // MDM fetch is skipped — existing assignedMdmServerId values in CoreData are kept.
+            // Force Refresh Devices causes rawABM to be populated, which triggers this too.
+            if !rawABM.isEmpty
+                && !store.axmCredentials.clientId.isEmpty
+                && !store.axmCredentials.keyId.isEmpty
+                && !store.axmCredentials.privateKeyContent.isEmpty {
+                stepLabel = "Fetching MDM server assignments…"
+                log.info("Step 1b — Fetching MDM server list…")
+                let mdmServers = await abmService.fetchMdmServers()
+                if mdmServers.isEmpty {
+                    log.warn("Step 1b — No MDM servers returned (org may have none, or auth issue).")
+                } else {
+                    log.info("Step 1b — Found \(mdmServers.count) MDM server(s). Fetching device assignments…")
+                    await withTaskGroup(of: (RawMdmServer, Set<String>).self) { group in
+                        for server in mdmServers {
+                            group.addTask {
+                                let ids = await abmService.fetchMdmServerDeviceIds(serverId: server.id)
+                                return (server, ids)
+                            }
+                        }
+                        for await (server, serials) in group {
+                            for serial in serials {
+                                mdmServerLookup[serial] = server
+                            }
+                            log.info("Step 1b — \(server.serverName): \(serials.count) device(s).")
+                        }
+                    }
+                    log.info("Step 1b — MDM assignment map built: \(mdmServerLookup.count) device(s) assigned.")
+                }
+                // Capture for summary card and log summary
+                lastRunMdmServers  = mdmServers.count
+                lastRunMdmAssigned = mdmServerLookup.count
+            } else if rawABM.isEmpty {
+                log.info("Step 1b — Skipped (AxM cache fresh or no devices fetched — MDM assignments unchanged).")
             }
 
             // ── Step 2: Jamf Computers + Mobile Devices ──────────────────
@@ -475,7 +518,18 @@ final class SyncEngine: ObservableObject {
 
 
                 stepLabel = "Saving \(merged.count) devices to CoreData…"
-                await store.upsertDevices(merged.map { $0.toDevice() })
+                let mdmLookup = mdmServerLookup
+                await store.upsertDevices(merged.map { sd in
+                    var d = sd.toDevice()
+                    if let server = mdmLookup[d.serialNumber] {
+                        d = d.copying(
+                            assignedMdmServerId:   .some(server.id),
+                            assignedMdmServerName: .some(server.serverName),
+                            mdmServerType:         .some(server.serverType)
+                        )
+                    }
+                    return d
+                })
                 // A2: Wait for CoreData reload to complete so Step 3 sees fresh device list
                 await store.loadDevicesFromCoreDataSync()
 
@@ -587,7 +641,12 @@ final class SyncEngine: ObservableObject {
                 // forceCoverage = OFF → resume semantics: finish .notFetched first, then
                 //                      re-fetch stale devices (per coverageCacheDays).
                 let allFetchableDevices: [Device] = store.devices.filter {
-                    $0.deviceSource != .jamfOnly && $0.axmDeviceId != nil
+                    guard $0.deviceSource != .jamfOnly && $0.axmDeviceId != nil else { return false }
+                    switch syncScope {
+                    case .both:   return true
+                    case .mac:    return !$0.isMobile
+                    case .mobile: return $0.isMobile
+                    }
                 }
                 let needsCoverage: [Device] = forceCoverage
                     ? allFetchableDevices                                          // force: re-fetch everything
@@ -1196,6 +1255,18 @@ final class SyncEngine: ObservableObject {
             log.info("  ───────────────────────────────────────────")
             log.info("  AxM devices         : \(axmLine)")
             log.info("  Jamf devices        : \(jamfLine)")
+            if lastRunMdmServers > 0 {
+                log.info("  MDM servers found   : \(lastRunMdmServers)")
+                log.info("  MDM assigned        : \(lastRunMdmAssigned)")
+                let unassigned = runAxmCount > 0 ? max(0, runAxmCount - lastRunMdmAssigned) : 0
+                if unassigned > 0 {
+                    log.info("  MDM unassigned      : \(unassigned)")
+                }
+            } else if !rawABM.isEmpty {
+                log.info("  MDM assignment      : skipped (no servers returned)")
+            } else {
+                log.info("  MDM assignment      : unchanged (cache fresh)")
+            }
             log.info("  Total in cache      : \(store.devices.count)")
             log.info("  ───────────────────────────────────────────")
             log.info("  Coverage fetched    : \(runCoverageCount)")
@@ -1289,7 +1360,18 @@ final class SyncEngine: ObservableObject {
                     log.warn("\(partialResult.clearedExternally) device(s) had purchasing data changed or cleared in Jamf (warrantyDate / vendor / poNumber / poDate) — re-queued for write-back.")
                     log.debug("[Detail] Purchasing data mismatch: \(partialResult.clearedExternally) device(s) found with one or more fields changed in Jamf since last sync.")
                 }
-                await store.upsertDevices(partial.map { $0.toDevice() })
+                let mdmLookupPartial = mdmServerLookup
+                await store.upsertDevices(partial.map { sd in
+                    var d = sd.toDevice()
+                    if let server = mdmLookupPartial[d.serialNumber] {
+                        d = d.copying(
+                            assignedMdmServerId:   .some(server.id),
+                            assignedMdmServerName: .some(server.serverName),
+                            mdmServerType:         .some(server.serverType)
+                        )
+                    }
+                    return d
+                })
                 await store.loadDevicesFromCoreDataSync()
                 // Only stamp lastAxmSync if no resume cursor is pending — a partial
                 // fetch must not mark the cache as fresh.
@@ -1759,6 +1841,9 @@ private struct SyncDevice {
     var jamfFileVaultStatus:  String?
     var jamfUsername:         String?
     var jamfDeviceType:       String?    // "computer" | "mobile"
+    var assignedMdmServerId:  String?
+    var assignedMdmServerName: String?
+    var mdmServerType:        String?
 
     func toDevice() -> Device {
         Device(
@@ -1798,6 +1883,9 @@ private struct SyncDevice {
             jamfFileVaultStatus:  jamfFileVaultStatus,
             jamfUsername:         jamfUsername,
             jamfDeviceType:       jamfDeviceType,
+            assignedMdmServerId:  assignedMdmServerId,
+            assignedMdmServerName: assignedMdmServerName,
+            mdmServerType:        mdmServerType,
             axmRawJson:           axmRawJson,
             axmCoverageRawJson:   axmCoverageRawJson
         )

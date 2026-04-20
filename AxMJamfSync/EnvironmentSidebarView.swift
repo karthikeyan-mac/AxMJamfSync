@@ -19,22 +19,24 @@ struct EnvironmentSidebarView: View {
       // Header
       HStack {
         Text("Environments")
-          .font(.headline)
+          .font(.subheadline)
+          .fontWeight(.semibold)
           .foregroundStyle(.secondary)
         Spacer()
         Button {
           showAddSheet = true
         } label: {
-          Image(systemName: "plus.circle.fill")
-            .font(.title3)
-            .foregroundStyle(Color.accentColor)
+          Image(systemName: "plus")
+            .font(.callout)
+            .fontWeight(.medium)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
+        .controlSize(.small)
         .help("Add a new environment")
         .disabled(syncEngine.isRunning)
       }
       .padding(.horizontal, 12)
-      .padding(.vertical, 10)
+      .padding(.vertical, 8)
 
       Divider()
 
@@ -65,17 +67,11 @@ struct EnvironmentSidebarView: View {
 
       // Footer — active environment info
       if let active = envStore.activeEnvironment {
-        HStack(spacing: 6) {
-          Image(systemName: active.scope == .school ? "graduationcap.fill" : "briefcase.fill")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-          Text(active.scope.label)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-          Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        Label(active.scope.label, systemImage: active.scope == .school ? "graduationcap" : "briefcase")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 7)
       }
     }
     // Add sheet
@@ -130,17 +126,18 @@ struct EnvironmentRow: View {
       // Status indicator
       if isRunning {
         ProgressView()
-          .scaleEffect(0.6)
-          .frame(width: 14, height: 14)
+          .fixedSize()
+          .scaleEffect(0.55)
+          .frame(width: 12, height: 12)
       } else {
         Image(systemName: env.lastSyncStatus.icon)
-          .font(.caption)
+          .font(.system(size: 11))
           .foregroundStyle(env.lastSyncStatus.color)
-          .frame(width: 14, height: 14)
+          .frame(width: 12, height: 12)
       }
 
       // Name + scope badge
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: 1) {
         Text(env.name)
           .font(.callout)
           .fontWeight(isActive ? .semibold : .regular)
@@ -148,7 +145,7 @@ struct EnvironmentRow: View {
           .lineLimit(1)
         Text(env.scope == .school ? "ASM" : "ABM")
           .font(.caption2)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.tertiary)
       }
 
       Spacer()
@@ -167,11 +164,11 @@ struct EnvironmentRow: View {
         .transition(.opacity)
       }
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 7)
+    .padding(.horizontal, 10)
+    .padding(.vertical, 6)
     .background(
-      RoundedRectangle(cornerRadius: 7)
-        .fill(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
+      RoundedRectangle(cornerRadius: 6)
+        .fill(isActive ? Color.accentColor.opacity(0.1) : Color.clear)
     )
     .contentShape(Rectangle())
     .onTapGesture { onSelect() }
@@ -194,8 +191,7 @@ struct AddEnvironmentSheet: View {
   @EnvironmentObject private var envStore: EnvironmentStore
   @Environment(\.dismiss) private var dismiss
 
-  @State private var name  = ""
-  @State private var scope: AxMScope = .business
+  @State private var name = ""
 
   private var isValid: Bool {
     !name.trimmingCharacters(in: .whitespaces).isEmpty
@@ -206,51 +202,32 @@ struct AddEnvironmentSheet: View {
       Text("New Environment")
         .font(.headline)
 
+      Text("Enter a name for this environment. The account type (ABM or ASM) will be set automatically when you configure credentials in Setup.")
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+
       TextField("Environment name (e.g. Acme Corp)", text: $name)
         .textFieldStyle(.roundedBorder)
         .onSubmit { if isValid { commit() } }
 
-      VStack(alignment: .leading, spacing: 6) {
-        Text("Account Type")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-        HStack(spacing: 0) {
-          ForEach(AxMScope.allCases, id: \.self) { s in
-            Button { scope = s } label: {
-              HStack(spacing: 4) {
-                Image(systemName: s == .school ? "graduationcap.fill" : "briefcase.fill")
-                  .font(.caption)
-                Text(s == .school ? "ASM" : "ABM")
-                  .font(.callout).fontWeight(.medium)
-              }
-              .frame(maxWidth: .infinity)
-              .padding(.vertical, 6)
-              .background(scope == s ? Color.accentColor : Color(NSColor.controlBackgroundColor))
-              .foregroundStyle(scope == s ? Color.white : Color.primary)
-            }
-            .buttonStyle(.plain)
-          }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color(NSColor.separatorColor), lineWidth: 1))
-      }
-
       HStack {
         Button("Cancel", role: .cancel) { dismiss() }
         Spacer()
-        Button("Add") { commit() }
+        Button("Add Environment") { commit() }
           .buttonStyle(.borderedProminent)
           .disabled(!isValid)
       }
     }
     .padding(24)
-    .frame(width: 320)
+    .frame(width: 340)
   }
 
   private func commit() {
     let trimmed = name.trimmingCharacters(in: .whitespaces)
     guard !trimmed.isEmpty else { return }
-    let env = envStore.add(name: trimmed, scope: scope)
+    // Scope defaults to .business — updated automatically when credentials are saved
+    let env = envStore.add(name: trimmed, scope: .business)
     envStore.setActive(env.id)
     dismiss()
   }
@@ -263,16 +240,21 @@ struct RenameEnvironmentView: View {
   let onCommit: () -> Void
 
   var body: some View {
-    HStack(spacing: 8) {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Rename Environment")
+        .font(.headline)
       TextField("Environment name", text: $text)
         .textFieldStyle(.roundedBorder)
-        .frame(width: 180)
+        .frame(width: 200)
         .onSubmit { onCommit() }
-      Button("Rename") { onCommit() }
-        .buttonStyle(.borderedProminent)
-        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+      HStack {
+        Spacer()
+        Button("Rename") { onCommit() }
+          .buttonStyle(.borderedProminent)
+          .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+      }
     }
-    .padding(12)
+    .padding(16)
   }
 }
 
@@ -291,41 +273,40 @@ struct DeleteEnvironmentSheet: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 20) {
-      // Header
       HStack(spacing: 10) {
-        Image(systemName: "exclamationmark.triangle.fill")
-          .font(.title2)
-          .foregroundStyle(.red)
+        Image(systemName: "trash.circle.fill")
+          .symbolRenderingMode(.multicolor)
+          .font(.title)
         Text("Delete Environment")
           .font(.headline)
       }
 
-      // Warning body
       VStack(alignment: .leading, spacing: 10) {
         Text("You are about to permanently delete **\(env.name)**.")
           .fixedSize(horizontal: false, vertical: true)
 
-        Text("This will irreversibly delete:")
+        Text("This will irreversibly remove:")
+          .font(.callout)
           .foregroundStyle(.secondary)
 
-        VStack(alignment: .leading, spacing: 4) {
-          Label("All \(env.scope == .school ? "ASM" : "ABM") device data and coverage cache", systemImage: "internaldrive")
+        VStack(alignment: .leading, spacing: 6) {
+          Label("\(env.scope == .school ? "ASM" : "ABM") device data and coverage cache", systemImage: "internaldrive")
           Label("All Jamf sync history", systemImage: "arrow.triangle.2.circlepath")
-          Label("Credentials stored in Keychain", systemImage: "key.fill")
-          Label("All sync preferences and timestamps", systemImage: "gearshape")
+          Label("Keychain credentials", systemImage: "key.fill")
+          Label("Sync preferences and timestamps", systemImage: "gearshape")
         }
         .font(.callout)
         .foregroundStyle(.primary)
-        .padding(.leading, 4)
+        .padding(.leading, 2)
 
         Text("This action cannot be undone.")
+          .font(.callout)
           .fontWeight(.semibold)
           .foregroundStyle(.red)
       }
 
       Divider()
 
-      // Confirmation input
       VStack(alignment: .leading, spacing: 6) {
         Text("Type **\(env.name)** to confirm:")
           .font(.callout)
@@ -334,7 +315,6 @@ struct DeleteEnvironmentSheet: View {
           .textFieldStyle(.roundedBorder)
       }
 
-      // Buttons
       HStack {
         Button("Cancel", role: .cancel) { onCancel() }
           .keyboardShortcut(.escape)
@@ -346,7 +326,7 @@ struct DeleteEnvironmentSheet: View {
       }
     }
     .padding(24)
-    .frame(width: 420)
+    .frame(width: 400)
   }
 }
 
@@ -357,31 +337,31 @@ struct MigrationOverlayView: View {
 
   var body: some View {
     ZStack {
-      Color.black.opacity(0.45)
+      Color.black.opacity(0.35)
         .ignoresSafeArea()
 
-      VStack(spacing: 20) {
+      VStack(spacing: 16) {
         ProgressView()
-          .scaleEffect(1.4)
-          .padding(.bottom, 4)
+          .fixedSize()
+          .scaleEffect(1.2)
 
-        Text("Upgrading to v2.0")
+        Text("Upgrading to v2.1")
           .font(.headline)
 
         Text(status.isEmpty ? "Migrating data…" : status)
           .font(.callout)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
-          .frame(maxWidth: 280)
+          .frame(maxWidth: 260)
 
         Text("This happens once and only takes a moment.")
           .font(.caption)
           .foregroundStyle(.tertiary)
           .multilineTextAlignment(.center)
       }
-      .padding(32)
-      .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-      .shadow(radius: 20)
+      .padding(28)
+      .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+      .shadow(color: .black.opacity(0.2), radius: 24, y: 8)
     }
   }
 }

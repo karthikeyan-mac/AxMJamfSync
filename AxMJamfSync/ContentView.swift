@@ -146,7 +146,10 @@ struct InfoButton: View {
 
     var body: some View {
         Button { isShowing.toggle() } label: {
-            Image(systemName: "info.circle").foregroundStyle(.secondary).font(.caption)
+            Image(systemName: "info.circle")
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.secondary)
+                .font(.caption)
         }
         .buttonStyle(.plain)
         .popover(isPresented: $isShowing, arrowEdge: .top) {
@@ -160,10 +163,10 @@ struct InfoPopoverCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Header row: icon + title
             HStack(spacing: 8) {
                 Image(systemName: info.icon)
-                    .font(.system(size: 15, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
                 Text(info.title)
                     .font(.headline)
@@ -172,19 +175,17 @@ struct InfoPopoverCard: View {
 
             Divider()
 
-            // Summary sentence
             Text(info.summary)
                 .font(.callout)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // Optional bullet points
             if !info.bullets.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 4) {
                     ForEach(info.bullets, id: \.self) { bullet in
-                        HStack(alignment: .top, spacing: 6) {
-                            Text("•")
-                                .font(.caption)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Image(systemName: "circle.fill")
+                                .font(.system(size: 4))
                                 .foregroundStyle(Color.accentColor)
                                 .padding(.top, 1)
                             Text(bullet)
@@ -212,7 +213,10 @@ struct CardSection<Content: View>: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 14) { content }.padding(.top, 4)
         } label: {
-            Label(title, systemImage: icon).font(.headline).foregroundStyle(.primary)
+            Label(title, systemImage: icon)
+                .symbolRenderingMode(.hierarchical)
+                .font(.headline)
+                .foregroundStyle(.primary)
         }
     }
 }
@@ -229,7 +233,10 @@ struct StatCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Image(systemName: icon).font(.title3).foregroundStyle(color)
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(color)
+                    .symbolRenderingMode(.hierarchical)
                 Spacer()
                 if let tooltip {
                     InfoButton(info: tooltip)
@@ -246,7 +253,7 @@ struct StatCard: View {
         .padding(14)
         .background(.background.secondary)
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color.opacity(0.25), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color.opacity(0.2), lineWidth: 1))
     }
 }
 
@@ -258,24 +265,21 @@ struct LockedTabPlaceholder: View {
     let reason: String
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
-            Text("Tab Not Available Yet")
+        VStack(spacing: 12) {
+            Image(systemName: "lock")
+                .font(.system(size: 32, weight: .light))
+                .foregroundStyle(.tertiary)
+            Text("Not Available Yet")
                 .font(.headline)
+                .foregroundStyle(.secondary)
             Text(reason)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
-            Text("Go to the **Setup** tab to get started.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.background)
     }
 }
 
@@ -288,11 +292,11 @@ struct AppTabBar: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach(tabs, id: \.self) { tab in
-                let allowed = isAllowed(tab)
+                let allowed    = isAllowed(tab)
                 let isSelected = selected == tab
 
                 Button {
-                    guard allowed else { return }   // ← hard block: ignore the click
+                    guard allowed else { return }
                     selected = tab
                 } label: {
                     VStack(spacing: 3) {
@@ -315,17 +319,16 @@ struct AppTabBar: View {
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .contentShape(Rectangle())
-                    // Show a "lock" cursor / no-entry tooltip when locked
-                    .help(allowed ? "" : "This tab is not available yet — run your first sync before you can use it. Go to the Dashboard tab and press Run Sync to download your devices.")
+                    .help(allowed ? "" : "This tab is not available yet — run your first sync before you can use it.")
                 }
                 .buttonStyle(.plain)
-                .disabled(!allowed)   // accessibility / keyboard only — click still blocked above
+                .disabled(!allowed)
             }
         }
         .padding(.horizontal, 8)
         .padding(.top, 6)
         .padding(.bottom, 2)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
     }
 }
@@ -343,32 +346,35 @@ struct AppHeaderBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
-                .frame(width: 38, height: 38)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .frame(width: 28, height: 28)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
             Text(appTitle)
-                .font(.system(size: 28, weight: .bold))
+                .font(.headline)
                 .foregroundStyle(.primary)
 
             Button {
                 showAbout = true
             } label: {
-                Image(systemName: "info.circle.fill").font(.body).foregroundStyle(.yellow)
+                Image(systemName: "info.circle")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("About this app — tap to see the version number, build date, and where to get help")
+            .help("About AxM Jamf Sync")
             .popover(isPresented: $showAbout, arrowEdge: .bottom) {
                 AboutPopover()
             }
 
             Spacer()
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(Color(NSColor.windowBackgroundColor))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
     }
 }
@@ -380,11 +386,11 @@ struct AboutPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Image(nsImage: NSApp.applicationIconImage)
-                    .resizable().frame(width: 48, height: 48)
+                    .resizable().frame(width: 44, height: 44)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text("AxM Jamf Sync")
                         .font(.headline)
                     Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")")
@@ -392,7 +398,7 @@ struct AboutPopover: View {
                 }
             }
 
-            Text("Syncs \(scopeFull) device inventory with Jamf Pro — including AppleCare coverage data and warranty write-back.")
+            Text("Syncs \(scopeFull) device inventory with Jamf Pro, including AppleCare coverage data and warranty write-back.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -407,7 +413,7 @@ struct AboutPopover: View {
             }
         }
         .padding(16)
-        .frame(width: 300)
+        .frame(width: 290)
     }
 }
 

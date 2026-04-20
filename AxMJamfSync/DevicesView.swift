@@ -36,7 +36,7 @@ struct DevicesView: View {
                     .frame(minWidth: 360, idealWidth: 420)
             }
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.background)
         // Issue 7: clear selected device when cache is wiped so stale detail doesn't persist
         .onChange(of: store.hasData) { _, hasData in
             if !hasData { selectedDevice = nil }
@@ -74,7 +74,8 @@ struct DeviceFilterBar: View {
     }
     private var hasActiveFilter: Bool {
         store.deviceTypeFilter != nil || store.deviceSourceFilter != nil ||
-        store.coverageFilter   != nil || store.wbFilter            != nil
+        store.coverageFilter   != nil || store.wbFilter            != nil ||
+        store.mdmServerFilter  != nil
     }
 
     var body: some View {
@@ -200,6 +201,44 @@ struct DeviceFilterBar: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
 
+                // MDM Server
+                if !store.allMdmServerNames.isEmpty || store.devices.contains(where: { $0.axmAssignmentStatus != nil }) {
+                    let isUnassignedFilter = store.mdmServerFilter == AppStore.mdmUnassignedSentinel
+                    let activeLabel: String = {
+                        if isUnassignedFilter { return "Unassigned" }
+                        return store.mdmServerFilter ?? "All MDM Servers"
+                    }()
+                    Menu {
+                        Button { store.mdmServerFilter = nil } label: {
+                            Label("All MDM Servers", systemImage: "server.rack")
+                        }
+                        Divider()
+                        Button {
+                            store.mdmServerFilter = isUnassignedFilter ? nil : AppStore.mdmUnassignedSentinel
+                        } label: {
+                            Label("Unassigned", systemImage: "questionmark.circle")
+                        }
+                        if !store.allMdmServerNames.isEmpty {
+                            Divider()
+                            ForEach(store.allMdmServerNames, id: \.self) { name in
+                                Button {
+                                    store.mdmServerFilter = store.mdmServerFilter == name ? nil : name
+                                } label: {
+                                    Label(name, systemImage: "server.rack")
+                                }
+                            }
+                        }
+                    } label: {
+                        FilterDropdownLabel(
+                            text: activeLabel,
+                            isActive: store.mdmServerFilter != nil,
+                            icon: store.mdmServerFilter != nil ? "server.rack" : "line.3.horizontal.decrease.circle"
+                        )
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                }
+
                 // Clear all filters
                 if hasActiveFilter {
                     Button {
@@ -207,6 +246,7 @@ struct DeviceFilterBar: View {
                         store.deviceSourceFilter = nil
                         store.coverageFilter     = nil
                         store.wbFilter           = nil
+                        store.mdmServerFilter    = nil
                     } label: {
                         Label("Clear", systemImage: "xmark.circle.fill")
                             .font(.caption)
@@ -384,6 +424,11 @@ struct DeviceRow: View, Equatable {
             VStack(alignment: .trailing, spacing: 4) {
                 CoverageBadge(status: device.coverageStatus)
                 SourceBadge(source: device.deviceSource, scopeAbbrev: scopeAbbrev)
+                if let mdm = device.assignedMdmServerName, !mdm.isEmpty {
+                    MdmServerBadge(serverName: mdm)
+                } else if device.axmAssignmentStatus == "Unassigned" {
+                    MdmUnassignedBadge()
+                }
                 if let wb = device.wbStatus, wb == .failed {
                     StatusBadge(label: "WB Failed", color: .red)
                 }
@@ -443,6 +488,43 @@ struct SourceBadge: View {
         .padding(.vertical, 3)
         .background(source.color.opacity(0.10))
         .foregroundStyle(source.color)
+        .clipShape(Capsule())
+    }
+}
+
+struct MdmServerBadge: View {
+    let serverName: String
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "server.rack")
+                .font(.caption2)
+            Text(serverName)
+                .font(.caption2)
+                .fontWeight(.medium)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color.purple.opacity(0.10))
+        .foregroundStyle(Color.purple)
+        .clipShape(Capsule())
+    }
+}
+
+struct MdmUnassignedBadge: View {
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "questionmark.circle")
+                .font(.caption2)
+            Text("Unassigned")
+                .font(.caption2)
+                .fontWeight(.medium)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color.gray.opacity(0.10))
+        .foregroundStyle(Color.secondary)
         .clipShape(Capsule())
     }
 }
@@ -530,6 +612,20 @@ struct DeviceDetailPanel: View {
                                     .foregroundStyle(.blue)
                             }
                         }
+                        if let mdmServer = device.assignedMdmServerName, !mdmServer.isEmpty {
+                            HStack(spacing: 6) {
+                                Text("MDM SERVER").font(.caption).foregroundStyle(.secondary)
+                                Text(mdmServer).font(.caption).fontWeight(.semibold)
+                                    .foregroundStyle(.purple)
+                                    .lineLimit(1)
+                            }
+                        } else if device.axmAssignmentStatus == "Unassigned" {
+                            HStack(spacing: 6) {
+                                Text("MDM SERVER").font(.caption).foregroundStyle(.secondary)
+                                Text("Unassigned").font(.caption).fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         HStack(spacing: 6) {
                             Text("COVERAGE").font(.caption).foregroundStyle(.secondary)
                             Text(device.coverageStatus.label)
@@ -600,7 +696,7 @@ struct DeviceDetailPanel: View {
                                 }
                                 .padding(12)
                             }
-                            .background(Color(NSColor.textBackgroundColor))
+                            .background(.background.secondary)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
@@ -631,13 +727,44 @@ struct DeviceDetailPanel: View {
                                 }
                                 .padding(12)
                             }
-                            .background(Color(NSColor.textBackgroundColor))
+                            .background(.background.secondary)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
                                     .stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1)
                             )
                             .padding(.horizontal, 16)
+                        }
+                    }
+
+                    // ── MDM Assignment section ──────────────────────────
+                    if device.deviceSource != .jamfOnly, device.axmDeviceId != nil {
+                        if let mdmName = device.assignedMdmServerName, !mdmName.isEmpty {
+                            DetailSection(title: "MDM Assignment", icon: "server.rack") {
+                                DetailGridRow(
+                                    left:  ("MDM Server", mdmName),
+                                    right: ("Type", device.mdmServerType.flatMap { MdmServerType(rawValue: $0)?.label } ?? device.mdmServerType)
+                                )
+                                if let serverId = device.assignedMdmServerId {
+                                    DetailAttrRow(label: "Server ID", value: serverId)
+                                }
+                            }
+                        } else {
+                            DetailSection(title: "MDM Assignment", icon: "questionmark.circle") {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "questionmark.circle")
+                                        .foregroundStyle(.secondary)
+                                        .font(.callout)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Not assigned to any MDM server")
+                                            .font(.callout)
+                                        Text("This device is registered in Apple Business/School Manager but has not been assigned to a Device Management Service.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -691,7 +818,7 @@ struct DeviceDetailPanel: View {
                 .padding(.top, 12)
             }
         }
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(.background.secondary)
     }
 
     // MARK: - Row builders
@@ -888,7 +1015,7 @@ struct AppleAttrSection: View {
                 .padding(.bottom, 10)
             }
         }
-        .background(Color(NSColor.textBackgroundColor))
+        .background(.background.secondary)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -926,7 +1053,7 @@ struct DetailSection<Content: View>: View {
             }
             .padding(12)
         }
-        .background(Color(NSColor.textBackgroundColor))
+        .background(.background.secondary)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -1038,7 +1165,10 @@ private let _detailDateFmt: DateFormatter = {
 
 // Additional statics used by formatShortDate inside DeviceDetailPanel
 private let _shortDateFmt: DateFormatter = {
-    let f = DateFormatter(); f.dateFormat = "dd/MM/yyyy"; return f
+    let f = DateFormatter()
+    f.dateStyle = .short
+    f.timeStyle = .none
+    return f
 }()
 private let _ymDateParser: DateFormatter = {
     let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
@@ -1049,8 +1179,8 @@ struct DeviceDetailPlaceholder: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "cursorarrow.click")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 36))
+                .foregroundStyle(.tertiary)
             Text("Select a device")
                 .font(.headline)
                 .foregroundStyle(.secondary)
@@ -1061,6 +1191,6 @@ struct DeviceDetailPlaceholder: View {
                 .frame(maxWidth: 200)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(.background.secondary)
     }
 }

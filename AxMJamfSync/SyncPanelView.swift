@@ -64,7 +64,7 @@ struct SyncView: View {
                 .frame(maxHeight: .infinity)
                 .padding(.horizontal, 24).padding(.vertical, 12)
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.background)
     }
 }
 
@@ -129,7 +129,7 @@ struct RichRunSummaryCard: View {
                         icon: "xmark.circle",
                         value: "\(engine.lastRunWBFailed)",
                         label: "Failed",
-                        color: Color(NSColor.secondaryLabelColor)
+                        color: .secondary
                     )
                 }
 
@@ -146,6 +146,17 @@ struct RichRunSummaryCard: View {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.caption)
                         Text("\(engine.lastRunWBFailed) Jamf Update failure\(engine.lastRunWBFailed == 1 ? "" : "s")")
                             .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+                if engine.lastRunMdmServers > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "server.rack")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(engine.lastRunMdmServers) MDM server\(engine.lastRunMdmServers == 1 ? "" : "s") · \(engine.lastRunMdmAssigned) assigned")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
                     }
                 }
             }
@@ -245,6 +256,7 @@ struct SyncProgressBlock: View {
     @ViewBuilder private var phaseIconView: some View {
         if engine.isRunning {
             ProgressView()
+                .fixedSize()
                 .scaleEffect(0.7)
                 .frame(width: 16, height: 16)
         } else {
@@ -283,21 +295,22 @@ struct LogWindowView: View {
         VStack(spacing: 0) {
             // ── Toolbar ──────────────────────────────────────────────
             HStack(spacing: 8) {
-                Image(systemName: "terminal.fill").font(.caption).foregroundStyle(.secondary)
-                Text("Log").font(.subheadline).fontWeight(.medium)
+                Label("Log", systemImage: "terminal")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary)
 
                 if log.warnCount > 0 {
                     Text("\(log.warnCount) warnings")
                         .font(.caption2).fontWeight(.semibold)
                         .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.18)).foregroundStyle(.orange)
+                        .background(Color.orange.opacity(0.15)).foregroundStyle(.orange)
                         .clipShape(Capsule())
                 }
                 if !log.entries.isEmpty {
-                    HStack(spacing: 3) {
-                        Circle().fill(Color.green).frame(width: 5, height: 5)
-                        Text("\(log.entries.count) lines").font(.caption2).foregroundStyle(.tertiary)
-                    }
+                    Text("\(log.entries.count) lines")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
 
                 Spacer()
@@ -319,22 +332,23 @@ struct LogWindowView: View {
 
                 Picker("", selection: $filterLevel) {
                     Text("All").tag(Optional<LogEntry.Level>.none)
-                    Text("INFO").tag(Optional<LogEntry.Level>.some(.info))
-                    Text("WARN").tag(Optional<LogEntry.Level>.some(.warn))
-                    Text("ERROR").tag(Optional<LogEntry.Level>.some(.error))
+                    Text("Info").tag(Optional<LogEntry.Level>.some(.info))
+                    Text("Warn").tag(Optional<LogEntry.Level>.some(.warn))
+                    Text("Error").tag(Optional<LogEntry.Level>.some(.error))
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+                .pickerStyle(.segmented).labelsHidden().frame(width: 180)
+                .controlSize(.small)
 
                 Button { log.copyAll() } label: {
                     Image(systemName: "doc.on.doc").font(.caption)
-                }.buttonStyle(.bordered).help("Copy the full sync log to your clipboard — useful if you need to share it with your IT admin or paste it into a support ticket")
+                }.buttonStyle(.bordered).help("Copy the full sync log to the clipboard")
 
                 Button { log.openLogFile() } label: {
                     Image(systemName: "arrow.up.right.square").font(.caption)
-                }.buttonStyle(.bordered).help("Open the raw log file in Console or TextEdit so you can browse the complete history of every sync the app has ever run")
+                }.buttonStyle(.bordered).help("Open the raw log file in Console or TextEdit")
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(Color(NSColor.windowBackgroundColor))
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(.bar)
 
             if !searchText.isEmpty {
                 Divider()
@@ -344,7 +358,7 @@ struct LogWindowView: View {
                     Spacer()
                 }
                 .padding(.horizontal, 12).padding(.vertical, 4)
-                .background(Color(NSColor.controlBackgroundColor))
+                .background(.background.secondary)
             }
 
             Divider()
@@ -365,9 +379,9 @@ struct LogWindowView: View {
                 }
             }
         }
-        .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+        .background(.background.secondary)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(NSColor.separatorColor), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 1))
     }
 }
 
@@ -386,7 +400,7 @@ struct LogLineView: View {
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(entry.level == .warn ? Color.orange :
                                  entry.level == .error ? Color.red :
-                                 Color(NSColor.labelColor))
+                                 Color.primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

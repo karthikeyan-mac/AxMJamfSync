@@ -54,6 +54,11 @@
         <attribute name="jamfFileVaultStatus"  optional="YES" attributeType="String"/>
         <attribute name="jamfUsername"         optional="YES" attributeType="String"/>
 
+        <!-- MDM Server assignment (from /v1/mdmServers/{id}/relationships/devices) -->
+        <attribute name="assignedMdmServerId"   optional="YES" attributeType="String"/>
+        <attribute name="assignedMdmServerName" optional="YES" attributeType="String"/>
+        <attribute name="mdmServerType"         optional="YES" attributeType="String"/>
+
         <!-- Metadata -->
         <attribute name="createdAt"            optional="NO"  attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="updatedAt"            optional="NO"  attributeType="Date" usesScalarValueType="NO"/>

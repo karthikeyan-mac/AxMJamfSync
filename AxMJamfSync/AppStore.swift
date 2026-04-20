@@ -34,6 +34,15 @@ final class AppStore: ObservableObject {
     @Published var filteredDevices: [Device]        = []   // debounced filtered result
     @Published var stats:           DashboardStats  = DashboardStats()
     @Published var hasData:         Bool            = false  // false after wipeCache / before first sync
+
+    /// Sentinel value used in mdmServerFilter to filter AxM devices with no MDM assignment.
+    nonisolated static let mdmUnassignedSentinel = "__unassigned__"
+
+    /// Sorted unique MDM server names present in the current device list — drives the filter dropdown.
+    var allMdmServerNames: [String] {
+        let names = devices.compactMap { $0.assignedMdmServerName }.filter { !$0.isEmpty }
+        return Array(Set(names)).sorted()
+    }
     /// Set synchronously in init from a CoreData row count — available before the async
     /// loadDevicesFromCoreData completes. Used for scope-lock UI that must be correct
     /// on the very first render, before hasData becomes true.
@@ -48,6 +57,7 @@ final class AppStore: ObservableObject {
     @Published var coverageFilter:     CoverageStatus? = nil { didSet { scheduleFilter() } }
     @Published var wbFilter:           WBStatus?       = nil { didSet { scheduleFilter() } }
     @Published var deviceTypeFilter:   DeviceKind?     = nil { didSet { scheduleFilter() } }
+    @Published var mdmServerFilter:    String?         = nil { didSet { scheduleFilter() } }  // assignedMdmServerName
     @Published var deviceSearchText:   String          = "" { didSet { scheduleFilter() } }
 
     // MARK: - Export
@@ -230,16 +240,24 @@ final class AppStore: ObservableObject {
         let covFilter  = coverageFilter
         let wbF        = wbFilter
         let typeFilter = deviceTypeFilter
+        let mdmFilter  = mdmServerFilter
         let searchText = deviceSearchText.lowercased()
 
         let result: [Device]
-        if srcFilter == nil && covFilter == nil && wbF == nil && typeFilter == nil && searchText.isEmpty {
+        if srcFilter == nil && covFilter == nil && wbF == nil && typeFilter == nil && mdmFilter == nil && searchText.isEmpty {
             result = snapshot
         } else {
             result = snapshot.filter { d in
                 if let src  = srcFilter,  d.deviceSource  != src          { return false }
                 if let cov  = covFilter,  d.coverageStatus != cov         { return false }
                 if let kind = typeFilter, d.deviceKind    != kind         { return false }
+                if let mdm = mdmFilter {
+                    if mdm == AppStore.mdmUnassignedSentinel {
+                        if d.axmAssignmentStatus != "Unassigned" { return false }
+                    } else {
+                        if d.assignedMdmServerName != mdm { return false }
+                    }
+                }
                 if let wb = wbF {
                     if d.deviceSource == .axmOnly { return false }
                     if d.wbStatus != wb { return false }
@@ -317,6 +335,7 @@ final class AppStore: ObservableObject {
         coverageFilter     = nil
         wbFilter           = nil
         deviceTypeFilter   = nil
+        mdmServerFilter    = nil
         deviceSearchText   = ""
         // Reset auth so Sync tab becomes disabled (user must re-test auth to re-enable)
         axmAuthStatus      = .idle
@@ -341,19 +360,26 @@ final class AppStore: ObservableObject {
         let covFilter  = coverageFilter
         let wbF        = wbFilter
         let typeFilter = deviceTypeFilter
+        let mdmFilter  = mdmServerFilter
         let searchText = deviceSearchText.lowercased()
 
         Task.detached(priority: .userInitiated) { [weak self] in
             let result: [Device]
-            if srcFilter == nil && covFilter == nil && wbF == nil && typeFilter == nil && searchText.isEmpty {
+            if srcFilter == nil && covFilter == nil && wbF == nil && typeFilter == nil && mdmFilter == nil && searchText.isEmpty {
                 result = snapshot
             } else {
                 result = snapshot.filter { d in
                     if let src  = srcFilter,  d.deviceSource  != src  { return false }
                     if let cov  = covFilter,  d.coverageStatus != cov  { return false }
                     if let kind = typeFilter, d.deviceKind    != kind  { return false }
+                    if let mdm = mdmFilter {
+                        if mdm == AppStore.mdmUnassignedSentinel {
+                            if d.axmAssignmentStatus != "Unassigned" { return false }
+                        } else {
+                            if d.assignedMdmServerName != mdm { return false }
+                        }
+                    }
                     if let wb = wbF {
-                        // axmOnly devices are never written to Jamf — exclude from all WB filters
                         if d.deviceSource == .axmOnly { return false }
                         if d.wbStatus != wb { return false }
                     }
@@ -421,6 +447,16 @@ final class AppStore: ObservableObject {
             case .failed:  s.wbFailed  += 1
             case .skipped: s.wbSkipped += 1
             case .none:    break
+            }
+
+            // MDM assignment stats — only for AxM devices
+            if d.deviceSource != .jamfOnly, d.axmDeviceId != nil {
+                if let serverName = d.assignedMdmServerName, !serverName.isEmpty {
+                    s.mdmAssigned += 1
+                    s.mdmServerBreakdown[serverName, default: 0] += 1
+                } else {
+                    s.mdmUnassigned += 1
+                }
             }
         }
 
@@ -588,57 +624,63 @@ enum AuthTestStatus: Equatable {
 // MARK: - ExportColumn defaults + CSV accessor
 extension ExportColumn {
     static let defaultColumns: [ExportColumn] = [
-        .init(id: "serialNumber",        label: "Serial Number",         enabled: true),
-        .init(id: "deviceSource",        label: "Device Source",         enabled: true),
-        .init(id: "axmDeviceStatus",     label: "AxM Device Status",     enabled: true),
-        .init(id: "axmCoverageStatus",   label: "Coverage Status",       enabled: true),
-        .init(id: "axmCoverageEndDate",  label: "Coverage End Date",     enabled: true),
-        .init(id: "axmAgreementNumber",  label: "AppleCare Agreement #", enabled: true),
-        .init(id: "axmPurchaseSource",   label: "Purchase Source",       enabled: true),
-        .init(id: "wbStatus",            label: "Jamf Update Status",    enabled: true),
-        .init(id: "wbPushedAt",          label: "Jamf Update Pushed At", enabled: false),
-        .init(id: "jamfName",            label: "Jamf Device Name",      enabled: true),
-        .init(id: "jamfManaged",         label: "Managed",               enabled: true),
-        .init(id: "jamfModel",           label: "Model",                 enabled: true),
-        .init(id: "jamfModelIdentifier", label: "Model Identifier",      enabled: false),
-        .init(id: "jamfMacAddress",      label: "MAC Address",           enabled: false),
-        .init(id: "jamfReportDate",      label: "Report Date",           enabled: false),
-        .init(id: "jamfLastContact",     label: "Last Contact",          enabled: true),
-        .init(id: "jamfLastEnrolled",    label: "Last Enrolled",         enabled: false),
-        .init(id: "jamfWarrantyDate",    label: "Jamf Warranty Date",    enabled: false),
-        .init(id: "jamfVendor",          label: "Jamf Vendor",           enabled: false),
-        .init(id: "jamfAppleCareId",     label: "Jamf AppleCare ID",     enabled: true),
-        .init(id: "jamfId",              label: "Jamf ID",               enabled: false),
-        .init(id: "wbNote",              label: "Jamf Update Note",      enabled: false),
+        .init(id: "serialNumber",          label: "Serial Number",           enabled: true),
+        .init(id: "deviceSource",          label: "Device Source",           enabled: true),
+        .init(id: "axmDeviceStatus",       label: "AxM Device Status",       enabled: true),
+        .init(id: "axmAssignmentStatus",   label: "MDM Assignment",          enabled: true),
+        .init(id: "assignedMdmServerName", label: "MDM Server",              enabled: true),
+        .init(id: "mdmServerType",         label: "MDM Server Type",         enabled: false),
+        .init(id: "axmCoverageStatus",     label: "Coverage Status",         enabled: true),
+        .init(id: "axmCoverageEndDate",    label: "Coverage End Date",       enabled: true),
+        .init(id: "axmAgreementNumber",    label: "AppleCare Agreement #",   enabled: true),
+        .init(id: "axmPurchaseSource",     label: "Purchase Source",         enabled: true),
+        .init(id: "wbStatus",              label: "Jamf Update Status",      enabled: true),
+        .init(id: "wbPushedAt",            label: "Jamf Update Pushed At",   enabled: false),
+        .init(id: "jamfName",              label: "Jamf Device Name",        enabled: true),
+        .init(id: "jamfManaged",           label: "Managed",                 enabled: true),
+        .init(id: "jamfModel",             label: "Model",                   enabled: true),
+        .init(id: "jamfModelIdentifier",   label: "Model Identifier",        enabled: false),
+        .init(id: "jamfMacAddress",        label: "MAC Address",             enabled: false),
+        .init(id: "jamfReportDate",        label: "Report Date",             enabled: false),
+        .init(id: "jamfLastContact",       label: "Last Contact",            enabled: true),
+        .init(id: "jamfLastEnrolled",      label: "Last Enrolled",           enabled: false),
+        .init(id: "jamfWarrantyDate",      label: "Jamf Warranty Date",      enabled: false),
+        .init(id: "jamfVendor",            label: "Jamf Vendor",             enabled: false),
+        .init(id: "jamfAppleCareId",       label: "Jamf AppleCare ID",       enabled: true),
+        .init(id: "jamfId",                label: "Jamf ID",                 enabled: false),
+        .init(id: "wbNote",                label: "Jamf Update Note",        enabled: false),
     ]
 }
 
 extension Device {
     func value(for col: String) -> String? {
         switch col {
-        case "serialNumber":        return serialNumber
-        case "deviceSource":        return deviceSource.label
-        case "axmDeviceStatus":     return axmDeviceStatus
-        case "axmCoverageStatus":   return coverageStatus.label
-        case "axmCoverageEndDate":  return axmCoverageEndDate
-        case "axmAgreementNumber":  return axmAgreementNumber
-        case "axmPurchaseSource":   return axmPurchaseSource
-        case "wbStatus":            return wbStatus?.label
-        case "wbPushedAt":          return wbPushedAt
-        case "wbNote":              return wbNote
-        case "jamfName":            return jamfName
-        case "jamfManaged":         return isManaged ? "Yes" : "No"
-        case "jamfModel":           return jamfModel
-        case "jamfModelIdentifier": return jamfModelIdentifier
-        case "jamfMacAddress":      return jamfMacAddress
-        case "jamfReportDate":      return jamfReportDate
-        case "jamfLastContact":     return jamfLastContact
-        case "jamfLastEnrolled":    return jamfLastEnrolled
-        case "jamfWarrantyDate":    return jamfWarrantyDate
-        case "jamfVendor":          return jamfVendor
-        case "jamfAppleCareId":     return jamfAppleCareId
-        case "jamfId":              return jamfId
-        default:                    return nil
+        case "serialNumber":          return serialNumber
+        case "deviceSource":          return deviceSource.label
+        case "axmDeviceStatus":       return axmDeviceStatus
+        case "axmAssignmentStatus":   return axmAssignmentStatus
+        case "assignedMdmServerName": return assignedMdmServerName
+        case "mdmServerType":         return mdmServerType.flatMap { MdmServerType(rawValue: $0)?.label } ?? mdmServerType
+        case "axmCoverageStatus":     return coverageStatus.label
+        case "axmCoverageEndDate":    return axmCoverageEndDate
+        case "axmAgreementNumber":    return axmAgreementNumber
+        case "axmPurchaseSource":     return axmPurchaseSource
+        case "wbStatus":              return wbStatus?.label
+        case "wbPushedAt":            return wbPushedAt
+        case "wbNote":                return wbNote
+        case "jamfName":              return jamfName
+        case "jamfManaged":           return isManaged ? "Yes" : "No"
+        case "jamfModel":             return jamfModel
+        case "jamfModelIdentifier":   return jamfModelIdentifier
+        case "jamfMacAddress":        return jamfMacAddress
+        case "jamfReportDate":        return jamfReportDate
+        case "jamfLastContact":       return jamfLastContact
+        case "jamfLastEnrolled":      return jamfLastEnrolled
+        case "jamfWarrantyDate":      return jamfWarrantyDate
+        case "jamfVendor":            return jamfVendor
+        case "jamfAppleCareId":       return jamfAppleCareId
+        case "jamfId":                return jamfId
+        default:                      return nil
         }
     }
 }

@@ -137,7 +137,26 @@ enum DeviceKind: String, CaseIterable {
     }
 }
 
-// MARK: - Device (pure value type — loaded from CoreData, never written directly)
+// MARK: - MDM Server Type
+enum MdmServerType: String {
+    case mdm              = "MDM"
+    case appleConfigurator = "APPLE_CONFIGURATOR"
+
+    var label: String {
+        switch self {
+        case .mdm:               return "MDM"
+        case .appleConfigurator: return "Apple Configurator"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .mdm:               return "server.rack"
+        case .appleConfigurator: return "apps.iphone"
+        }
+    }
+}
+
+
 struct Device: Identifiable, Hashable {
     var id: String { serialNumber }
 
@@ -177,6 +196,9 @@ struct Device: Identifiable, Hashable {
     let jamfFileVaultStatus:    String?
     let jamfUsername:           String?
     let jamfDeviceType:         String?    // "computer" | "mobile" — nil for AxM-only
+    let assignedMdmServerId:    String?    // MDM server UUID from /v1/mdmServers
+    let assignedMdmServerName:  String?    // e.g. "ProdJamf|Pro"
+    let mdmServerType:          String?    // "MDM" | "APPLE_CONFIGURATOR"
     let axmRawJson:             Data?
     let axmCoverageRawJson:     Data?
 
@@ -195,7 +217,8 @@ struct Device: Identifiable, Hashable {
         lhs.jamfManaged       == rhs.jamfManaged        &&
         lhs.jamfOsVersion     == rhs.jamfOsVersion      &&
         lhs.jamfFileVaultStatus == rhs.jamfFileVaultStatus &&
-        lhs.jamfDeviceType      == rhs.jamfDeviceType
+        lhs.jamfDeviceType      == rhs.jamfDeviceType   &&
+        lhs.assignedMdmServerName == rhs.assignedMdmServerName
     }
     func hash(into hasher: inout Hasher) {
         // Hash only the stable unique key — O(1) instead of hashing 35 fields.
@@ -226,6 +249,16 @@ struct Device: Identifiable, Hashable {
         return "desktopcomputer"
     }
     var isManaged: Bool { jamfManaged?.lowercased() == "true" }
+
+    /// MDM assignment status — only meaningful for devices in AxM (axmDeviceId != nil).
+    /// Derived from MDM server lookup populated during sync:
+    ///   "Assigned"   — device appears in an MDM server's device list
+    ///   "Unassigned" — device is in AxM but not assigned to any MDM server
+    ///   nil          — Jamf-only device (no AxM record, Apple has no MDM assignment info)
+    var axmAssignmentStatus: String? {
+        guard deviceSource != .jamfOnly, axmDeviceId != nil else { return nil }
+        return assignedMdmServerId != nil ? "Assigned" : "Unassigned"
+    }
     /// True when this device is an iPad/iPhone/AppleTV (uses /api/v2/mobile-devices in Jamf).
     /// Derived from ABM productFamily when available (most reliable), then Jamf deviceType.
     var isMobile: Bool {
@@ -247,7 +280,7 @@ struct Device: Identifiable, Hashable {
     // a non-nil value (including .some(nil) for Optional fields) overrides it.
     // Wrap Optional fields in another Optional: pass String?? to override a String?.
     func copying(
-        deviceSource:         DeviceSource?       = nil,   // nil → keep self.deviceSource
+        deviceSource:         DeviceSource?       = nil,
         axmCoverageStatus:    String??            = nil,
         axmCoverageEndDate:   String??            = nil,
         axmCoverageFetchedAt: String??            = nil,
@@ -258,7 +291,10 @@ struct Device: Identifiable, Hashable {
         jamfWarrantyDate:     String??            = nil,
         jamfAppleCareId:      String??            = nil,
         axmCoverageRawJson:   Data??              = nil,
-        jamfDeviceType:       String??            = nil
+        jamfDeviceType:       String??            = nil,
+        assignedMdmServerId:  String??            = nil,
+        assignedMdmServerName: String??           = nil,
+        mdmServerType:        String??            = nil
     ) -> Device {
         Device(
             serialNumber:         serialNumber,
@@ -297,6 +333,9 @@ struct Device: Identifiable, Hashable {
             jamfFileVaultStatus:  jamfFileVaultStatus,
             jamfUsername:         jamfUsername,
             jamfDeviceType:       jamfDeviceType       ?? self.jamfDeviceType,
+            assignedMdmServerId:  assignedMdmServerId  ?? self.assignedMdmServerId,
+            assignedMdmServerName: assignedMdmServerName ?? self.assignedMdmServerName,
+            mdmServerType:        mdmServerType        ?? self.mdmServerType,
             axmRawJson:           axmRawJson,
             axmCoverageRawJson:   axmCoverageRawJson   ?? self.axmCoverageRawJson
         )
@@ -325,6 +364,10 @@ struct DashboardStats {
     var exportCovFoundCount: Int = 0   // active/inactive/expired/cancelled
     var exportCovActiveCount: Int = 0  // coverageStatus == .active
     var exportCovInactiveCount: Int = 0 // inactive/expired/cancelled
+    // MDM assignment stats — only for AxM devices (jamfOnly excluded)
+    var mdmAssigned:         Int = 0
+    var mdmUnassigned:       Int = 0
+    var mdmServerBreakdown:  [String: Int] = [:]  // serverName → device count
 }
 
 // MARK: - AxM Scope
@@ -406,7 +449,7 @@ extension Device {
                jamfModel: "MacBook Pro 15\"", jamfModelIdentifier: "MacBookPro8,2",
                jamfMacAddress: "a4:5e:60:ab:cd:ef", jamfReportDate: "2026-03-01T00:00:00Z",
                jamfLastContact: "2026-03-03T00:00:00Z", jamfLastEnrolled: "2024-06-15T00:00:00Z",
-               jamfWarrantyDate: "2027-03-01", jamfVendor: "Apple", jamfAppleCareId: "APP-123456", jamfOsVersion: "14.5", jamfFileVaultStatus: "ALL_ENCRYPTED", jamfUsername: "karthik.m", jamfDeviceType: "computer", axmRawJson: nil, axmCoverageRawJson: nil),
+               jamfWarrantyDate: "2027-03-01", jamfVendor: "Apple", jamfAppleCareId: "APP-123456", jamfOsVersion: "14.5", jamfFileVaultStatus: "ALL_ENCRYPTED", jamfUsername: "karthik.m", jamfDeviceType: "computer", assignedMdmServerId: "B996D182CC0C4298ADF7992033EA8FE6", assignedMdmServerName: "ProdJamf|Pro", mdmServerType: "MDM", axmRawJson: nil, axmCoverageRawJson: nil),
         Device(serialNumber: "FVFXG2Q6Q6LR", deviceSource: .axmOnly,
                axmDeviceId: "FVFXG2Q6Q6LR", axmDeviceStatus: "ACTIVE",
                axmDeviceFetchedAt: "2026-03-03T19:59:36Z", axmPurchaseSource: "APPLE", axmPurchaseSourceId: nil, axmOrderNumber: nil, axmOrderDate: nil,
@@ -417,7 +460,7 @@ extension Device {
                jamfId: nil, jamfName: nil, jamfManaged: nil, jamfModel: nil,
                jamfModelIdentifier: nil, jamfMacAddress: nil, jamfReportDate: nil,
                jamfLastContact: nil, jamfLastEnrolled: nil, jamfWarrantyDate: nil,
-               jamfVendor: nil, jamfAppleCareId: nil, jamfOsVersion: nil, jamfFileVaultStatus: nil, jamfUsername: nil, jamfDeviceType: nil, axmRawJson: nil, axmCoverageRawJson: nil),
+               jamfVendor: nil, jamfAppleCareId: nil, jamfOsVersion: nil, jamfFileVaultStatus: nil, jamfUsername: nil, jamfDeviceType: nil, assignedMdmServerId: nil, assignedMdmServerName: nil, mdmServerType: nil, axmRawJson: nil, axmCoverageRawJson: nil),
         Device(serialNumber: "C02GH1Z6DTY3", deviceSource: .both,
                axmDeviceId: "C02GH1Z6DTY3", axmDeviceStatus: "ACTIVE",
                axmDeviceFetchedAt: "2026-03-03T19:59:36Z", axmPurchaseSource: "RESELLER", axmPurchaseSourceId: "RSL-001", axmOrderNumber: "PO-20190101", axmOrderDate: "2019-01-01",
@@ -429,7 +472,7 @@ extension Device {
                jamfModel: "MacBook Air", jamfModelIdentifier: "MacBookAir10,1",
                jamfMacAddress: "f4:d4:88:11:22:33", jamfReportDate: "2026-02-28T00:00:00Z",
                jamfLastContact: "2026-02-28T00:00:00Z", jamfLastEnrolled: "2023-01-10T00:00:00Z",
-               jamfWarrantyDate: nil, jamfVendor: nil, jamfAppleCareId: nil, jamfOsVersion: nil, jamfFileVaultStatus: nil, jamfUsername: nil, jamfDeviceType: nil, axmRawJson: nil, axmCoverageRawJson: nil),
+               jamfWarrantyDate: nil, jamfVendor: nil, jamfAppleCareId: nil, jamfOsVersion: nil, jamfFileVaultStatus: nil, jamfUsername: nil, jamfDeviceType: nil, assignedMdmServerId: nil, assignedMdmServerName: nil, mdmServerType: nil, axmRawJson: nil, axmCoverageRawJson: nil),
         Device(serialNumber: "VMQ52LH6PF", deviceSource: .jamfOnly,
                axmDeviceId: nil, axmDeviceStatus: nil, axmDeviceFetchedAt: nil,
                axmPurchaseSource: nil, axmPurchaseSourceId: nil, axmOrderNumber: nil, axmOrderDate: nil, axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: nil,
@@ -440,7 +483,7 @@ extension Device {
                jamfModel: "Mac mini", jamfModelIdentifier: "Macmini9,1",
                jamfMacAddress: "3c:22:fb:44:55:66", jamfReportDate: "2026-01-15T00:00:00Z",
                jamfLastContact: "2026-01-15T00:00:00Z", jamfLastEnrolled: "2022-08-20T00:00:00Z",
-               jamfWarrantyDate: "2024-09-01", jamfVendor: "Apple", jamfAppleCareId: nil, jamfOsVersion: "13.6", jamfFileVaultStatus: "ALL_ENCRYPTED", jamfUsername: nil, jamfDeviceType: nil, axmRawJson: nil, axmCoverageRawJson: nil),
+               jamfWarrantyDate: "2024-09-01", jamfVendor: "Apple", jamfAppleCareId: nil, jamfOsVersion: "13.6", jamfFileVaultStatus: "ALL_ENCRYPTED", jamfUsername: nil, jamfDeviceType: nil, assignedMdmServerId: nil, assignedMdmServerName: nil, mdmServerType: nil, axmRawJson: nil, axmCoverageRawJson: nil),
     ]
 }
 

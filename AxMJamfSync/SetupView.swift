@@ -35,7 +35,7 @@ struct SetupView: View {
                 // ── Sync running banner ──────────────────────────────
                 if isRunning {
                     HStack(spacing: 8) {
-                        ProgressView().scaleEffect(0.8)
+                        ProgressView().fixedSize().scaleEffect(0.8)
                         Text("Sync in progress — Setup is read-only.")
                             .font(.callout).foregroundStyle(.secondary)
                         Spacer()
@@ -74,17 +74,18 @@ struct SetupView: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 14)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.bar)
         } // VStack
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.background)
     }
 }
 
 // MARK: - AxM Credentials Panel
 
 struct AxMCredentialsPanel: View {
-    @EnvironmentObject private var store: AppStore
-    @EnvironmentObject private var prefs: AppPreferences
+    @EnvironmentObject private var store:    AppStore
+    @EnvironmentObject private var prefs:    AppPreferences
+    @EnvironmentObject private var envStore: EnvironmentStore
     let isRunning: Bool
     @State private var saveToKeychain = true
 
@@ -99,7 +100,7 @@ struct AxMCredentialsPanel: View {
 
     var body: some View {
         CardSection(title: scopeFull, icon: "applelogo") {
-            // ── Account type: horizontal segmented row (#5) ──────────
+            // ── Account type ─────────────────────────────────────────
             VStack(alignment: .leading, spacing: 8) {
                 InfoLabel(
                     text: "Account Type",
@@ -114,9 +115,6 @@ struct AxMCredentialsPanel: View {
                         ]
                     ))
 
-                // Lock rule: account type is locked if EITHER credentials exist in
-                // Keychain OR data is cached. Both must be empty to allow switching.
-                // scopeLocked is a @State refreshed on appear and credential changes.
                 HStack(spacing: 10) {
                     ForEach(AxMScope.allCases, id: \.self) { scope in
                         Button {
@@ -127,40 +125,29 @@ struct AxMCredentialsPanel: View {
                             store.axmCredentials = saved
                             store.axmAuthStatus  = .idle
                             prefs.activeScope = scope.rawValue
-                            KeychainService.save(scope.rawValue, for: .axmScope)
-                            saveToKeychain = !saved.clientId.isEmpty
-                                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: scope == .school
-                                    ? "graduationcap.fill"
-                                    : "briefcase.fill")
-                                    .font(.callout)
-                                Text(scope.label)
-                                    .font(.callout).fontWeight(.medium)
+                            // Persist scope to env-namespaced Keychain key
+                            if let envId = store.environmentId {
+                                KeychainService.saveForEnv(scope.rawValue, key: "axm.scope", envId: envId)
                             }
-                            .padding(.horizontal, 14).padding(.vertical, 7)
+                            KeychainService.save(scope.rawValue, for: .axmScope)
+                            // Persist scope change to AppEnvironment so buildServices
+                            // loads the correct scope on next switch or relaunch
+                            if let envId = store.environmentId {
+                                envStore.updateScope(envId, scope: scope)
+                            }
+                            saveToKeychain = !saved.clientId.isEmpty
+                        } label: {
+                            Label(
+                                scope.label,
+                                systemImage: scope == .school ? "graduationcap.fill" : "briefcase.fill"
+                            )
+                            .font(.callout)
+                            .fontWeight(.medium)
                             .frame(maxWidth: .infinity)
-                            .background(
-                                store.axmCredentials.scope == scope
-                                    ? Color.accentColor
-                                    : Color(NSColor.controlBackgroundColor)
-                            )
-                            .foregroundStyle(
-                                store.axmCredentials.scope == scope
-                                    ? Color.white
-                                    : Color.primary
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .strokeBorder(
-                                        store.axmCredentials.scope == scope
-                                            ? Color.accentColor
-                                            : Color(NSColor.separatorColor),
-                                        lineWidth: 1)
-                            )
+                            .padding(.vertical, 6)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.bordered)
+                        .tint(store.axmCredentials.scope == scope ? Color.accentColor : nil)
                         .disabled(scopeLocked && store.axmCredentials.scope != scope)
                         .opacity(scopeLocked && store.axmCredentials.scope != scope ? 0.35 : 1.0)
                         .help(scopeLocked && store.axmCredentials.scope != scope
@@ -169,13 +156,9 @@ struct AxMCredentialsPanel: View {
                     }
                 }
                 if scopeLocked {
-                    HStack(spacing: 4) {
-                        Image(systemName: "lock.fill").font(.caption2)
-                        Text("Account type is locked. Clear credentials and delete cache to switch.")
-                            .font(.caption2)
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
+                    Label("Account type is locked. Clear credentials and delete cache to switch.", systemImage: "lock.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -315,12 +298,9 @@ struct AxMCredentialsPanel: View {
         let scope = store.axmCredentials.scope
         store.axmCredentials = AxMCredentials()
         store.axmCredentials.scope = scope
-        // Delete env-namespaced keys (v2.0 path)
+        // Delete env-namespaced keys (v2.0 path) — uses scoped key helper
         if let envId = store.environmentId {
-            KeychainService.deleteForEnv(key: "axm.clientId",          envId: envId)
-            KeychainService.deleteForEnv(key: "axm.keyId",             envId: envId)
-            KeychainService.deleteForEnv(key: "axm.privateKeyContent", envId: envId)
-            KeychainService.deleteForEnv(key: "axm.scope",             envId: envId)
+            KeychainService.deleteAxMCredentialsForEnv(id: envId, scope: scope)
         }
         // Also delete v1 flat keys (no-op if already migrated, safety net otherwise)
         KeychainService.delete(for: .axmBizClientId);    KeychainService.delete(for: .axmBizKeyId)
@@ -489,13 +469,19 @@ struct JamfCredentialsPanel: View {
 struct AuthStatusBadge: View {
     let status: AuthTestStatus
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             if status == .testing {
-                ProgressView().scaleEffect(0.7)
+                ProgressView().fixedSize().scaleEffect(0.7)
+                    .frame(width: 14, height: 14)
             } else if let icon = status.icon {
-                Image(systemName: icon).foregroundStyle(status.color).font(.callout)
+                Image(systemName: icon)
+                    .foregroundStyle(status.color)
+                    .font(.callout)
             }
-            Text(status.label).font(.callout).foregroundStyle(status.color).lineLimit(1)
+            Text(status.label)
+                .font(.callout)
+                .foregroundStyle(status.color)
+                .lineLimit(1)
         }
     }
 }
@@ -510,22 +496,11 @@ struct APIPrivilegesButton: View {
         Button {
             showPrivileges = true
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "lock.shield")
-                    .font(.callout)
-                Text("API Privileges Required")
-                    .font(.callout)
-                    .fontWeight(.medium)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .foregroundStyle(Color.cyan)
-            .background(Color.cyan.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.cyan.opacity(0.35), lineWidth: 1))
+            Label("API Privileges Required", systemImage: "lock.shield")
+                .font(.callout)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.bordered)
+        .tint(.cyan)
         .popover(isPresented: $showPrivileges, arrowEdge: .bottom) {
             APIPrivilegesPopover()
         }

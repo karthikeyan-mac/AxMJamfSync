@@ -155,6 +155,66 @@ struct DashboardView: View {
                 }
                 .padding(.horizontal, 24)
 
+                // MARK: MDM Assignment — full-width, only shown when data exists
+                if s.mdmAssigned > 0 || s.mdmUnassigned > 0 {
+                    CardSection(title: "MDM Assignment", icon: "server.rack") {
+                        HStack(alignment: .top, spacing: 16) {
+                            // Left: assigned / unassigned stat cards
+                            HStack(spacing: 12) {
+                                CoverageStatCard(
+                                    title: "Assigned",
+                                    value: s.mdmAssigned,
+                                    total: s.axmTotal,
+                                    icon:  "checkmark.circle.fill",
+                                    color: .purple,
+                                    tooltip: InfoContent(
+                                        icon:    "checkmark.circle.fill",
+                                        title:   "MDM Assigned",
+                                        summary: "AxM devices assigned to a Device Management Service (MDM server).",
+                                        bullets: [
+                                            "These devices are enrolled in an MDM server in \(scopeAbbrev).",
+                                            "Breakdown by server is shown on the right."
+                                        ]
+                                    )
+                                )
+                                CoverageStatCard(
+                                    title: "Unassigned",
+                                    value: s.mdmUnassigned,
+                                    total: s.axmTotal,
+                                    icon:  "questionmark.circle.fill",
+                                    color: .secondary,
+                                    tooltip: InfoContent(
+                                        icon:    "questionmark.circle.fill",
+                                        title:   "MDM Unassigned",
+                                        summary: "AxM devices not assigned to any Device Management Service.",
+                                        bullets: [
+                                            "These devices are registered in \(scopeAbbrev) but have not been assigned to an MDM server.",
+                                            "Use the Devices tab to find and review these devices."
+                                        ]
+                                    )
+                                )
+                            }
+
+                            // Right: per-server breakdown
+                            if !s.mdmServerBreakdown.isEmpty {
+                                Divider()
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("MDM Servers")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.bottom, 2)
+                                    let sorted = s.mdmServerBreakdown.sorted { $0.value > $1.value }
+                                    ForEach(sorted, id: \.key) { name, count in
+                                        DashStatRow(label: name, value: count, color: .purple)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                }
+
                 // MARK: Coverage breakdown — full-width
                 CardSection(title: "Apple Warranty Status", icon: "shield.lefthalf.filled") {
                     HStack(spacing: 12) {
@@ -230,7 +290,7 @@ struct DashboardView: View {
                             CoverageLegendRow(label: "In Warranty",      value: s.coverageActive,       color: .green)
                             CoverageLegendRow(label: "Out of Warranty",  value: s.coverageInactive,     color: .red)
                             CoverageLegendRow(label: "No Coverage Info", value: s.coverageNoPlan,       color: .orange)
-                            CoverageLegendRow(label: "Never Fetched",    value: s.coverageNeverFetched, color: Color(NSColor.secondaryLabelColor))
+                            CoverageLegendRow(label: "Never Fetched",    value: s.coverageNeverFetched, color: .secondary)
                         }
                         .frame(minWidth: 260)
 
@@ -244,7 +304,7 @@ struct DashboardView: View {
                 Spacer(minLength: 24)
             }
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.background)
     }
 }
 
@@ -269,14 +329,17 @@ struct GlobalSyncButton: View {
                 showStopConfirm = true
             } else {
                 engine.run(store: store)
-                navigateToSync?()   // navigate immediately — engine.run() is fire-and-forget
+                navigateToSync?()
             }
         } label: {
             HStack(spacing: 6) {
                 if engine.isRunning {
-                    ProgressView().scaleEffect(0.75)
+                    ProgressView().fixedSize().scaleEffect(0.75)
+                        .frame(width: 16, height: 16)
                 } else {
-                    Image(systemName: "arrow.triangle.2.circlepath.circle.fill").font(.title3)
+                    Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                        .symbolRenderingMode(.hierarchical)
+                        .font(.title3)
                 }
                 Text(engine.isRunning ? "Stop Sync" : "Run Sync").fontWeight(.semibold)
             }
@@ -368,6 +431,7 @@ struct CoverageStatCard: View {
             HStack {
                 Image(systemName: icon)
                     .foregroundStyle(color)
+                    .symbolRenderingMode(.hierarchical)
                 Spacer()
                 if let tooltip {
                     InfoButton(info: tooltip)
@@ -405,7 +469,7 @@ struct CoverageRingView: View {
             (Double(stats.coverageActive)       / total, .green),
             (Double(stats.coverageInactive)     / total, .red),
             (Double(stats.coverageNoPlan)       / total, .orange),
-            (Double(stats.coverageNeverFetched) / total, Color(NSColor.secondaryLabelColor)),
+            (Double(stats.coverageNeverFetched) / total, .secondary),
         ]
     }
 

@@ -237,7 +237,7 @@ struct ExportView: View {
                 Spacer(minLength: 24)
             }
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.background)
     }
 
     private func defaultFilename() -> String {
@@ -379,7 +379,7 @@ struct PreviewRowsSheet: View {
                                     .font(.system(size: 11, weight: .semibold))
                                     .padding(.horizontal, 8).padding(.vertical, 6)
                                     .frame(minWidth: 100, alignment: .leading)
-                                    .background(Color(NSColor.controlBackgroundColor))
+                                    .background(.background.secondary)
                                 Divider()
                             }
                         }
@@ -404,6 +404,6 @@ struct PreviewRowsSheet: View {
             }
         }
         .frame(minWidth: 700, minHeight: 320)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(.background)
     }
 }

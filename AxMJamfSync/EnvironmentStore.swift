@@ -116,19 +116,75 @@ final class EnvironmentStore: ObservableObject {
   // MARK: - Service construction
 
   private func buildServices(for env: AppEnvironment) {
+    // ── Scope self-heal ─────────────────────────────────────────────────────
+    // AppEnvironment.scope (stored in UserDefaults) may disagree with the
+    // scope that was actually used when credentials were saved — this happens
+    // when an env was created as ABM but credentials were entered as ASM before
+    // the fix that persists scope changes back to AppEnvironment.
+    //
+    // Strategy: the saved "axm.scope" Keychain key for this env is the ground
+    // truth because it is written every time credentials are saved or the scope
+    // button is tapped. If it disagrees with env.scope, correct the in-memory
+    // env and persist the correction to UserDefaults before building services.
+    var env = env
+    // ── Three-source scope resolution ────────────────────────────────────────
+    // When Keychain is cleared, axm.scope and clientId are gone but dataCachedScope
+    // in UserDefaults survives. Use all three sources in priority order:
+    //   1. axm.scope Keychain key (most authoritative — written on every credential save)
+    //   2. clientId prefix (SCHOOLAPI* / BUSINESSAPI* — written with credentials)
+    //   3. dataCachedScope UserDefaults (survives Keychain wipe — written by SyncEngine)
+    let savedScopeRaw = KeychainService.loadForEnv(key: "axm.scope", envId: env.id) ?? ""
+    let clientIdRaw   = KeychainService.loadForEnv(key: "axm.clientId", envId: env.id) ?? ""
+    let cachedPrefs   = AppPreferences(environmentId: env.id)
+    let inferredScope: AxMScope? = {
+      if let s = AxMScope(rawValue: savedScopeRaw) { return s }
+      if clientIdRaw.uppercased().hasPrefix("SCHOOLAPI")   { return .school }
+      if clientIdRaw.uppercased().hasPrefix("BUSINESSAPI") { return .business }
+      // Fallback 3: scope of the data already in CoreData — written by SyncEngine at sync end
+      if let s = AxMScope(rawValue: cachedPrefs.dataCachedScope) { return s }
+      return nil
+    }()
+    if let correctedScope = inferredScope, correctedScope != env.scope {
+      os_log(.default, "[EnvironmentStore] Scope mismatch for env %{public}@ — AppEnvironment=%{public}@ corrected to=%{public}@.", env.id.uuidString, env.scope.rawValue, correctedScope.rawValue)
+      env.scope = correctedScope
+      if let idx = environments.firstIndex(where: { $0.id == env.id }) {
+        environments[idx].scope = correctedScope
+        save()
+      }
+      let correctedRaw = correctedScope.rawValue
+      if cachedPrefs.dataCachedScope != correctedRaw { cachedPrefs.dataCachedScope = correctedRaw }
+      if cachedPrefs.activeScope     != correctedRaw { cachedPrefs.activeScope     = correctedRaw }
+    }
+
+    // ── Keychain key migration ───────────────────────────────────────────────
+    // Migrate credentials from old scopeless keys (axm.clientId) to scoped keys
+    // (axm.business.clientId / axm.school.clientId) if scoped keys are empty.
+    // This runs once per environment and is a no-op thereafter.
+    let s = env.scope == .school ? "school" : "business"
+    let hasScoped = KeychainService.loadForEnv(key: "axm.\(s).clientId", envId: env.id)?.isEmpty == false
+    if !hasScoped {
+      if let clientId = KeychainService.loadForEnv(key: "axm.clientId", envId: env.id), !clientId.isEmpty {
+        os_log(.default, "[EnvironmentStore] Migrating scopeless Keychain keys to axm.%{public}@.* for env %{public}@", s, env.id.uuidString)
+        let keyId   = KeychainService.loadForEnv(key: "axm.keyId",             envId: env.id) ?? ""
+        let privKey = KeychainService.loadForEnv(key: "axm.privateKeyContent", envId: env.id) ?? ""
+        _ = KeychainService.saveForEnv(clientId, key: "axm.\(s).clientId",          envId: env.id)
+        _ = KeychainService.saveForEnv(keyId,    key: "axm.\(s).keyId",             envId: env.id)
+        if !privKey.isEmpty {
+          _ = KeychainService.saveForEnv(privKey, key: "axm.\(s).privateKeyContent", envId: env.id)
+        }
+      }
+    }
+
     let persistence  = PersistenceController(environmentId: env.id)
     let prefs        = AppPreferences(environmentId: env.id)
     let logService   = LogService.makeForEnvironment(id: env.id)
     activeStore      = AppStore(environment: env, persistence: persistence, prefs: prefs)
     activeSyncEngine = SyncEngine()
     activeSyncEngine.log = logService
-    // Wire status callback so sidebar reflects sync progress
     let envId = env.id
     activeSyncEngine.onSyncStatusChange = { [weak self] status, date in
       self?.updateSyncStatus(envId, status: status, date: date)
     }
-    // Set synchronously — cacheIsPopulated is derived from a CoreData row count
-    // in AppStore.init, so it is always correct before any view renders.
     initialTab = activeStore.cacheIsPopulated ? .dashboard : .setup
   }
 
@@ -163,6 +219,14 @@ final class EnvironmentStore: ObservableObject {
   /// Returns true if this environment can be deleted.
   /// The last remaining environment cannot be deleted — the app requires at least one.
   func canDelete(_ id: UUID) -> Bool { environments.count > 1 }
+
+  /// Update the scope of an environment — persists the change so buildServices
+  /// always loads the correct scope on the next switch or relaunch.
+  func updateScope(_ id: UUID, scope: AxMScope) {
+    guard let idx = environments.firstIndex(where: { $0.id == id }) else { return }
+    environments[idx].scope = scope
+    save()
+  }
 
   func delete(_ id: UUID) {
     guard canDelete(id) else { return }

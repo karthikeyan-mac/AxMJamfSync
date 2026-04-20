@@ -399,23 +399,45 @@ enum KeychainService {
     }
 
     /// Load credentials for a specific environment.
+    /// Key format: axm.{scope}.clientId — scoped so ABM and ASM credentials
+    /// coexist independently within the same environment UUID.
+    /// Falls back to the legacy scopeless key (axm.clientId) for existing data.
     static func loadAxMCredentialsForEnv(id: UUID, scope: AxMScope) -> AxMCredentials {
         var c = AxMCredentials()
-        c.scope             = scope
-        c.clientId          = loadForEnv(key: "axm.clientId",          envId: id) ?? ""
-        c.keyId             = loadForEnv(key: "axm.keyId",             envId: id) ?? ""
-        c.privateKeyContent = loadForEnv(key: "axm.privateKeyContent", envId: id) ?? ""
-        c.privateKeyPath    = ""
+        c.scope = scope
+        let s = scope == .school ? "school" : "business"
+        // Prefer scope-namespaced key; fall back to legacy scopeless key for migration compat
+        c.clientId = loadForEnv(key: "axm.\(s).clientId", envId: id)
+            ?? loadForEnv(key: "axm.clientId", envId: id) ?? ""
+        c.keyId = loadForEnv(key: "axm.\(s).keyId", envId: id)
+            ?? loadForEnv(key: "axm.keyId", envId: id) ?? ""
+        c.privateKeyContent = loadForEnv(key: "axm.\(s).privateKeyContent", envId: id)
+            ?? loadForEnv(key: "axm.privateKeyContent", envId: id) ?? ""
+        c.privateKeyPath = ""
         return c
     }
 
     static func saveAxMCredentialsForEnv(_ c: AxMCredentials, id: UUID) {
-        saveForEnv(c.scope.rawValue,    key: "axm.scope",           envId: id)
-        saveForEnv(c.clientId,          key: "axm.clientId",        envId: id)
-        saveForEnv(c.keyId,             key: "axm.keyId",           envId: id)
+        let s = c.scope == .school ? "school" : "business"
+        saveForEnv(c.scope.rawValue, key: "axm.scope",                 envId: id)
+        saveForEnv(c.clientId,       key: "axm.\(s).clientId",         envId: id)
+        saveForEnv(c.keyId,          key: "axm.\(s).keyId",            envId: id)
         if !c.privateKeyContent.isEmpty {
-            saveForEnv(c.privateKeyContent, key: "axm.privateKeyContent", envId: id)
+            saveForEnv(c.privateKeyContent, key: "axm.\(s).privateKeyContent", envId: id)
         }
+    }
+
+    /// Delete AxM credentials for a specific scope within an environment.
+    static func deleteAxMCredentialsForEnv(id: UUID, scope: AxMScope) {
+        let s = scope == .school ? "school" : "business"
+        deleteForEnv(key: "axm.\(s).clientId",         envId: id)
+        deleteForEnv(key: "axm.\(s).keyId",            envId: id)
+        deleteForEnv(key: "axm.\(s).privateKeyContent", envId: id)
+        // Also delete legacy scopeless keys in case they were written by an older build
+        deleteForEnv(key: "axm.clientId",          envId: id)
+        deleteForEnv(key: "axm.keyId",             envId: id)
+        deleteForEnv(key: "axm.privateKeyContent", envId: id)
+        deleteForEnv(key: "axm.scope",             envId: id)
     }
 
     static func loadJamfCredentialsForEnv(id: UUID) -> JamfCredentials {
@@ -441,13 +463,14 @@ enum KeychainService {
     /// v1 flat keys are NOT deleted here — call deleteV1KeychainKeys() only after
     /// the entire migration (CoreData + UserDefaults) completes successfully.
     static func migrateToEnvironment(id: UUID, scope: AxMScope) {
-        if let v = load(for: scope == .school ? .axmSchoolClientId  : .axmBizClientId),  !v.isEmpty { saveForEnv(v, key: "axm.clientId",          envId: id) }
-        if let v = load(for: scope == .school ? .axmSchoolKeyId     : .axmBizKeyId),     !v.isEmpty { saveForEnv(v, key: "axm.keyId",             envId: id) }
-        if let v = load(for: scope == .school ? .axmSchoolPrivateKey : .axmBizPrivateKey),!v.isEmpty { saveForEnv(v, key: "axm.privateKeyContent", envId: id) }
-        if let v = load(for: .jamfURL),          !v.isEmpty { saveForEnv(v,              key: "jamf.url",          envId: id) }
-        if let v = load(for: .jamfClientId),     !v.isEmpty { saveForEnv(v,              key: "jamf.clientId",     envId: id) }
-        if let v = load(for: .jamfClientSecret), !v.isEmpty { saveForEnv(v,              key: "jamf.clientSecret", envId: id) }
-        if let v = load(for: .jamfPageSize),     !v.isEmpty { saveForEnv(v,              key: "jamf.pageSize",     envId: id) }
+        let s = scope == .school ? "school" : "business"
+        if let v = load(for: scope == .school ? .axmSchoolClientId  : .axmBizClientId),  !v.isEmpty { saveForEnv(v, key: "axm.\(s).clientId",          envId: id) }
+        if let v = load(for: scope == .school ? .axmSchoolKeyId     : .axmBizKeyId),     !v.isEmpty { saveForEnv(v, key: "axm.\(s).keyId",             envId: id) }
+        if let v = load(for: scope == .school ? .axmSchoolPrivateKey : .axmBizPrivateKey),!v.isEmpty { saveForEnv(v, key: "axm.\(s).privateKeyContent", envId: id) }
+        if let v = load(for: .jamfURL),          !v.isEmpty { saveForEnv(v, key: "jamf.url",          envId: id) }
+        if let v = load(for: .jamfClientId),     !v.isEmpty { saveForEnv(v, key: "jamf.clientId",     envId: id) }
+        if let v = load(for: .jamfClientSecret), !v.isEmpty { saveForEnv(v, key: "jamf.clientSecret", envId: id) }
+        if let v = load(for: .jamfPageSize),     !v.isEmpty { saveForEnv(v, key: "jamf.pageSize",     envId: id) }
         saveForEnv(scope.rawValue, key: "axm.scope", envId: id)
     }
 
