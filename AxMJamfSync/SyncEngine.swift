@@ -52,6 +52,8 @@ final class SyncEngine: ObservableObject {
 
     // Per-environment log — injected by EnvironmentStore.buildServices().
     var log: LogService = LogService.shared
+    // Set by buildServices so the engine knows which environment it belongs to.
+    var environmentId: UUID? = nil
     // Called at sync start/end so EnvironmentStore can update sidebar status.
     var onSyncStatusChange: ((EnvironmentSyncStatus, Date?) -> Void)?
     private var syncTask:  Task<Void, Never>?
@@ -264,7 +266,9 @@ final class SyncEngine: ObservableObject {
             // Guard: treat CoreData-empty as a forced refresh even if timestamps say "fresh".
             // Timestamps in UserDefaults can survive a CoreData wipe (sandbox reset, reinstall,
             // or a failed wipe that cleared the SQLite store but not UserDefaults).
-            let coreDataEmpty = store.devices.isEmpty
+            // Use cacheIsPopulated (set synchronously from viewContext count in AppStore.init)
+            // rather than store.devices (async-loaded — may still be empty on background stores).
+            let coreDataEmpty = !store.cacheIsPopulated
             if coreDataEmpty && (prefs.lastAxmSync != nil || prefs.lastJamfSync != nil) {
                 log.warn("Step 1/4 — Cache timestamps present but CoreData is empty — forcing full device fetch.")
                 prefs.resetSyncTimestamps()   // realign timestamps with actual data state

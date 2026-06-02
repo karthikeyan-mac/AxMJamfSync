@@ -312,44 +312,104 @@ struct DashboardView: View {
 /// Shared Run/Stop button — used on Setup, Sync, and Dashboard tabs.
 /// Pass navigateToSync to auto-switch to the Sync tab on start (Setup only).
 struct GlobalSyncButton: View {
-    @ObservedObject        var engine: SyncEngine
-    @EnvironmentObject private var store: AppStore
+    @ObservedObject        var engine:  SyncEngine
+    @EnvironmentObject private var store:    AppStore
+    @EnvironmentObject private var envStore: EnvironmentStore
     var navigateToSync: (() -> Void)? = nil
     @State private var showStopConfirm = false
+    @State private var isHovering      = false
 
-    var canRun: Bool {
+    private var canRun: Bool {
         let axm  = !store.axmCredentials.clientId.isEmpty && !store.axmCredentials.keyId.isEmpty
         let jamf = !store.jamfCredentials.url.isEmpty && !store.jamfCredentials.clientId.isEmpty
         return axm || jamf
+    }
+
+    private var isQueued: Bool {
+        guard let envId = store.environmentId else { return false }
+        return envStore.syncQueue.dropFirst().contains(envId)
+    }
+
+    // MARK: State-derived appearance
+
+    private var buttonLabel: String {
+        if engine.isRunning { return "Stop Sync" }
+        if isQueued          { return "In Queue"  }
+        return "Run Sync"
+    }
+
+    private var buttonIcon: String {
+        if engine.isRunning { return "stop.circle.fill"                        }
+        if isQueued          { return "clock.badge.checkmark"                  }
+        return "arrow.triangle.2.circlepath.circle.fill"
+    }
+
+    private var buttonTint: Color {
+        if engine.isRunning { return .red                       }
+        if isQueued          { return Color(.secondaryLabelColor) }
+        if !canRun           { return Color(.tertiaryLabelColor) }
+        return .accentColor
+    }
+
+    private var isDisabled: Bool {
+        isQueued || (!canRun && !engine.isRunning)
+    }
+
+    private var helpText: String {
+        if engine.isRunning { return "Stop the sync in progress — devices fetched so far will be saved" }
+        if isQueued          { return "This environment is waiting in the sync queue"                    }
+        if canRun            { return "Sync devices from Apple and Jamf, check warranty coverage, and update Jamf" }
+        return "Enter your Apple and Jamf credentials in Setup before running a sync"
     }
 
     var body: some View {
         Button {
             if engine.isRunning {
                 showStopConfirm = true
-            } else {
-                engine.run(store: store)
+            } else if !isQueued {
+                if let envId = store.environmentId {
+                    envStore.enqueue(envId)
+                } else {
+                    engine.run(store: store)
+                }
                 navigateToSync?()
             }
         } label: {
             HStack(spacing: 6) {
-                if engine.isRunning {
-                    ProgressView().fixedSize().scaleEffect(0.75)
-                        .frame(width: 16, height: 16)
+                if engine.isRunning && !showStopConfirm {
+                    ProgressView()
+                        .fixedSize()
+                        .scaleEffect(0.75)
+                        .tint(.white)
+                        .frame(width: 15, height: 15)
                 } else {
-                    Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                    Image(systemName: buttonIcon)
                         .symbolRenderingMode(.hierarchical)
-                        .font(.title3)
+                        .font(.system(size: 14, weight: .semibold))
                 }
-                Text(engine.isRunning ? "Stop Sync" : "Run Sync").fontWeight(.semibold)
+                Text(buttonLabel)
+                    .font(.system(size: 13, weight: .semibold))
             }
+            .foregroundStyle(isDisabled ? Color(.tertiaryLabelColor) : .white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isDisabled
+                          ? Color(.quaternaryLabelColor)
+                          : isHovering
+                            ? buttonTint.opacity(0.85)
+                            : buttonTint)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .tint(engine.isRunning ? .red : Color.accentColor)
-        .disabled(!canRun && !engine.isRunning)
-        .help(engine.isRunning ? "Click to stop the sync that is currently in progress — any devices already fetched will be saved" :
-              canRun ? "Fetch all devices from Apple and Jamf, check warranty coverage, and update Jamf with the latest warranty dates" : "Go to the Setup tab and enter your Apple and Jamf credentials before running a sync")
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .onHover { isHovering = $0 }
+        .animation(.easeInOut(duration: 0.15), value: engine.isRunning)
+        .animation(.easeInOut(duration: 0.15), value: isQueued)
+        .animation(.easeInOut(duration: 0.1),  value: isHovering)
+        .help(helpText)
         .confirmationDialog(
             "Stop Sync?",
             isPresented: $showStopConfirm,
@@ -358,7 +418,7 @@ struct GlobalSyncButton: View {
             Button("Stop & Save Progress", role: .destructive) { engine.stop() }
             Button("Keep Running", role: .cancel) { }
         } message: {
-            Text("All devices fetched so far will be saved to cache immediately. The next Run Sync will skip already-fetched steps and resume from where this stopped.")
+            Text("All devices fetched so far will be saved to cache. The next Run Sync will resume from where this left off.")
         }
     }
 }

@@ -335,48 +335,117 @@ struct AppTabBar: View {
 
 // MARK: - App header bar (shown at top of every tab)
 struct AppHeaderBar: View {
-    @EnvironmentObject private var store: AppStore
-    @State private var showAbout = false
+  @EnvironmentObject private var store:    AppStore
+  @EnvironmentObject private var envStore: EnvironmentStore
+  @State private var showAbout         = false
+  @State private var showStopSlotConfirm   = false
+  @State private var showCancelAllConfirm  = false
 
-    private var appTitle: String {
-        switch store.axmCredentials.scope {
-        case .business: return "ABM Jamf Sync"
-        case .school:   return "ASM Jamf Sync"
-        }
+  private var appTitle: String {
+    switch store.axmCredentials.scope {
+    case .business: return "ABM Jamf Sync"
+    case .school:   return "ASM Jamf Sync"
     }
+  }
 
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 28, height: 28)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack(spacing: 10) {
+        Image(nsImage: NSApp.applicationIconImage)
+          .resizable()
+          .frame(width: 28, height: 28)
+          .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            Text(appTitle)
-                .font(.headline)
+        Text(appTitle)
+          .font(.headline)
+          .foregroundStyle(.primary)
+
+        Button {
+          showAbout = true
+        } label: {
+          Image(systemName: "info.circle")
+            .symbolRenderingMode(.hierarchical)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("About AxM Jamf Sync")
+        .popover(isPresented: $showAbout, arrowEdge: .bottom) {
+          AboutPopover()
+        }
+
+        Spacer()
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 8)
+
+      // Sync queue banner — shown while any sync is queued or running
+      if envStore.isSyncQueueRunning {
+        Divider()
+        HStack(spacing: 8) {
+          ProgressView()
+            .fixedSize()
+            .scaleEffect(0.7)
+          VStack(alignment: .leading, spacing: 1) {
+            if !envStore.syncQueueProgress.isEmpty {
+              Text(envStore.syncQueueProgress)
+                .font(.callout)
                 .foregroundStyle(.primary)
-
-            Button {
-                showAbout = true
-            } label: {
-                Image(systemName: "info.circle")
-                    .symbolRenderingMode(.hierarchical)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            } else if let envId = envStore.syncQueue.first,
+                      let name = envStore.environments.first(where: { $0.id == envId })?.name {
+              Text("Syncing — \(name)")
+                .font(.callout)
+                .foregroundStyle(.primary)
             }
-            .buttonStyle(.plain)
-            .help("About AxM Jamf Sync")
-            .popover(isPresented: $showAbout, arrowEdge: .bottom) {
-                AboutPopover()
+            if envStore.syncQueue.count > 1 {
+              Text("\(envStore.syncQueue.count - 1) environment\(envStore.syncQueue.count - 1 == 1 ? "" : "s") waiting")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
             }
-
-            Spacer()
+          }
+          Spacer()
+          Button("Stop & Save") {
+            showStopSlotConfirm = true
+          }
+          .buttonStyle(.borderless)
+          .font(.caption)
+          .foregroundStyle(.orange)
+          .disabled(envStore.currentSlotEngine?.isRunning != true)
+          .confirmationDialog(
+            "Stop Current Sync?",
+            isPresented: $showStopSlotConfirm,
+            titleVisibility: .visible
+          ) {
+            Button("Stop & Save Progress", role: .destructive) { envStore.stopCurrentSlot() }
+            Button("Keep Running", role: .cancel) { }
+          } message: {
+            Text("The current environment's sync will stop. Devices fetched so far will be saved. The queue will continue with the next environment.")
+          }
+          Button("Cancel All") {
+            showCancelAllConfirm = true
+          }
+          .buttonStyle(.borderless)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .confirmationDialog(
+            "Cancel All Syncs?",
+            isPresented: $showCancelAllConfirm,
+            titleVisibility: .visible
+          ) {
+            Button("Cancel All & Stop", role: .destructive) { envStore.cancelQueue() }
+            Button("Keep Running", role: .cancel) { }
+          } message: {
+            Text("The current sync will stop and all queued environments will be removed. Devices fetched so far will be saved.")
+          }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.vertical, 6)
+        .background(.yellow.opacity(0.08))
+      }
     }
+    .background(.bar)
+    .overlay(alignment: .bottom) { Divider() }
+  }
 }
 
 struct AboutPopover: View {

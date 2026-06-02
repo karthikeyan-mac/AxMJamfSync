@@ -17,8 +17,6 @@ struct SyncView: View {
     @ObservedObject  var engine: SyncEngine
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var prefs: AppPreferences
-    // Use the engine's per-environment log — not the shared singleton.
-    private var log: LogService { engine.log }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,7 +33,6 @@ struct SyncView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
 
-                    // Progress card — only shown while running (#6)
                     if engine.isRunning {
                         GroupBox {
                             SyncProgressBlock(engine: engine)
@@ -46,7 +43,6 @@ struct SyncView: View {
                         .padding(.horizontal, 24)
                     }
 
-                    // Rich run summary — shown after sync completes
                     if engine.lastRunDate != nil {
                         RichRunSummaryCard(engine: engine)
                             .padding(.horizontal, 24)
@@ -59,8 +55,7 @@ struct SyncView: View {
 
             Divider()
 
-            // ── Log window — fixed below, always scrollable ──────────
-            LogWindowView(log: log)
+            LogWindowView(log: engine.log)
                 .frame(maxHeight: .infinity)
                 .padding(.horizontal, 24).padding(.vertical, 12)
         }

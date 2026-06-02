@@ -69,7 +69,6 @@ struct SetupView: View {
         HStack {
             Spacer()
             GlobalSyncButton(engine: engine, navigateToSync: navigateToSync)
-                .controlSize(.large)
             Spacer()
         }
         .padding(.horizontal, 24)

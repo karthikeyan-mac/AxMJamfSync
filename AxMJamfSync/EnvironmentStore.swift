@@ -81,11 +81,55 @@ final class EnvironmentStore: ObservableObject {
   /// The SyncEngine for the currently active environment.
   @Published private(set) var activeSyncEngine: SyncEngine = SyncEngine()
 
+  /// Registry of engines that are actively running, keyed by environment UUID.
+  /// buildServices consults this before creating a new engine — if an engine is
+  /// already running for the requested environment (because the user switched away
+  /// and back), it is reused so the UI keeps observing live isRunning / progress.
+  private var runningEngines: [UUID: SyncEngine] = [:]
+
   /// True while the one-time v1→v2 CoreData migration is running.
   @Published private(set) var isMigrating: Bool = false
   @Published private(set) var migrationStatus: String = ""
   /// Set synchronously in buildServices — ContentView reads this before first render.
   @Published private(set) var initialTab: ContentView.Tab = .setup
+
+  // MARK: - Sync Queue
+  //
+  // All syncs — whether triggered manually (Run Sync button) or via multi-sync —
+  // go through a single serial queue. The runner switches the active environment
+  // before each slot, so the existing Sync tab and log window show live progress
+  // naturally. No background engines are ever created.
+  //
+  // Queue semantics:
+  //   syncQueue[0]  = currently running (or about to run) environment
+  //   syncQueue[1…] = pending slots in order
+  //
+  // Adding an ID that is already in the queue is a no-op — deduplication is
+  // enforced by enqueue, so double-tapping Run Sync never starts parallel syncs.
+
+  /// Ordered list of environment IDs waiting to sync. Non-empty iff a sync run
+  /// is in progress or pending. Index 0 is always the currently-active slot.
+  @Published private(set) var syncQueue: [UUID] = []
+  private var syncQueueTask: Task<Void, Never>?
+
+  var isSyncQueueRunning: Bool { !syncQueue.isEmpty }
+
+  /// The engine that owns the currently-executing queue slot.
+  /// May differ from activeSyncEngine when the user has switched environments
+  /// while a sync is in progress.
+  var currentSlotEngine: SyncEngine? {
+    guard let id = syncQueue.first else { return nil }
+    return runningEngines[id] ?? (activeSyncEngine.environmentId == id ? activeSyncEngine : nil)
+  }
+
+  var syncQueueProgress: String {
+    guard syncQueue.count > 1 else { return "" }
+    let name = environments.first(where: { $0.id == syncQueue.first })?.name ?? ""
+    let suffix = name.isEmpty ? "" : " — \(name)"
+    let done = max(0, (environments.count) - syncQueue.count)
+    let total = done + syncQueue.count
+    return "Syncing \(done + 1) of \(total)\(suffix)"
+  }
 
   private let ud = UserDefaults.standard
   private let listKey   = "v2.environments"
@@ -179,11 +223,30 @@ final class EnvironmentStore: ObservableObject {
     let prefs        = AppPreferences(environmentId: env.id)
     let logService   = LogService.makeForEnvironment(id: env.id)
     activeStore      = AppStore(environment: env, persistence: persistence, prefs: prefs)
-    activeSyncEngine = SyncEngine()
-    activeSyncEngine.log = logService
-    let envId = env.id
-    activeSyncEngine.onSyncStatusChange = { [weak self] status, date in
-      self?.updateSyncStatus(envId, status: status, date: date)
+
+    // If an engine is already running for this environment — whether it is the
+    // current activeSyncEngine or a previously-active engine the user switched
+    // away from — reuse it. This preserves the live isRunning / progress state
+    // that SwiftUI components observe, regardless of how many environment switches
+    // happened while the sync was in progress.
+    if let running = runningEngines[env.id] {
+      activeSyncEngine     = running
+      activeSyncEngine.log = logService
+    } else {
+      let engine = SyncEngine()
+      engine.log           = logService
+      engine.environmentId = env.id
+      let envId = env.id
+      engine.onSyncStatusChange = { [weak self, weak engine] status, date in
+        guard let self, let engine else { return }
+        if status == .running {
+          self.runningEngines[envId] = engine
+        } else {
+          self.runningEngines.removeValue(forKey: envId)
+        }
+        self.updateSyncStatus(envId, status: status, date: date)
+      }
+      activeSyncEngine = engine
     }
     initialTab = activeStore.cacheIsPopulated ? .dashboard : .setup
   }
@@ -243,15 +306,105 @@ final class EnvironmentStore: ObservableObject {
 
   func setActive(_ id: UUID) {
     guard environments.contains(where: { $0.id == id }) else { return }
-    guard !activeSyncEngine.isRunning else {
-      os_log(.default, "[EnvironmentStore] Switch blocked — sync is running.")
-      return
-    }
-    activeSyncEngine.stop()   // defensive cleanup before replacing the engine
+    // Switching the active view is always allowed — the running engine keeps its
+    // own Task and service references and continues uninterrupted. buildServices
+    // only replaces the @Published pointers; it does not touch the running engine.
+    // Do NOT call activeSyncEngine.stop() here — that would cancel a live sync.
     activeEnvironmentId = id
     ud.set(id.uuidString, forKey: activeKey)
     if let env = activeEnvironment {
       buildServices(for: env)
+    }
+  }
+
+  // MARK: - Sync Queue
+
+  /// Adds the given environment to the sync queue if it isn't already present.
+  /// If the runner is idle this starts it immediately.
+  /// Called by both Run Sync (single env) and the multi-sync popover.
+  func enqueue(_ id: UUID) {
+    guard environments.contains(where: { $0.id == id }) else { return }
+    guard !syncQueue.contains(id) else { return }
+    syncQueue.append(id)
+    if syncQueueTask == nil { startQueueRunner() }
+  }
+
+  /// Appends all IDs in order, deduplicating. Starts the runner if idle.
+  func enqueueMultiSync(ids: [UUID]) {
+    for id in ids {
+      guard environments.contains(where: { $0.id == id }) else { continue }
+      guard !syncQueue.contains(id) else { continue }
+      syncQueue.append(id)
+    }
+    if syncQueueTask == nil && !syncQueue.isEmpty { startQueueRunner() }
+  }
+
+  /// Cancels the current slot (stops the active engine, saving progress)
+  /// and clears the rest of the queue.
+  func cancelQueue() {
+    syncQueueTask?.cancel()
+    syncQueueTask = nil
+    // Stop whichever engine owns the current slot — may differ from activeSyncEngine
+    // when the user has switched to a different environment while the queue runs.
+    if let currentEnvId = syncQueue.first, let engine = runningEngines[currentEnvId] {
+      engine.stop()
+    } else if activeSyncEngine.isRunning {
+      activeSyncEngine.stop()
+    }
+    runningEngines.removeAll()
+    syncQueue.removeAll()
+  }
+
+  /// Stops the current slot only — progress is saved, queue advances to next env.
+  func stopCurrentSlot() {
+    // Look up the engine that owns the current queue slot. It may not be
+    // activeSyncEngine if the user switched environments while the slot was running.
+    if let currentEnvId = syncQueue.first, let engine = runningEngines[currentEnvId] {
+      engine.stop()
+    } else {
+      activeSyncEngine.stop()
+    }
+  }
+
+  private func startQueueRunner() {
+    guard syncQueueTask == nil else { return }   // never start a second runner
+    syncQueueTask = Task { @MainActor in
+      defer { syncQueueTask = nil }
+      while !syncQueue.isEmpty && !Task.isCancelled {
+        let envId = syncQueue[0]
+
+        if activeEnvironmentId != envId {
+          setActive(envId)
+          // Wait for buildServices to complete and SwiftUI to inject the new
+          // activeSyncEngine before we call run() on it.
+          try? await Task.sleep(for: .milliseconds(300))
+          guard !Task.isCancelled else { break }
+        }
+
+        // Capture engine + store as locals so environment switches by the user
+        // during this slot don't affect which engine we're polling.
+        let engine = activeSyncEngine
+        let store  = activeStore
+
+        if engine.isRunning {
+          // A manual Run Sync was already triggered on this environment — wait for it.
+          while engine.isRunning && !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(500))
+          }
+        } else {
+          engine.run(store: store)
+          // Poll until the engine signals completion.
+          // Use a short initial sleep so isRunning = true has time to propagate.
+          try? await Task.sleep(for: .milliseconds(100))
+          while engine.isRunning && !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(500))
+          }
+          if Task.isCancelled { engine.stop() }
+        }
+
+        // Always dequeue the finished slot before looping.
+        if syncQueue.first == envId { syncQueue.removeFirst() }
+      }
     }
   }
 
@@ -349,6 +502,8 @@ final class EnvironmentStore: ObservableObject {
     AppPreferences.wipeEnvironment(id: id)
     PersistenceController.wipeEnvironment(id: id)
     LogService.wipeEnvironmentLog(id: id)
+    LogService.evictEnvironment(id: id)
+    runningEngines.removeValue(forKey: id)
     os_log(.default, "[EnvironmentStore] Wiped all data for environment %{public}@", id.uuidString)
   }
 }

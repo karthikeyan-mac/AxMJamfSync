@@ -9,10 +9,11 @@ import SwiftUI
 struct EnvironmentSidebarView: View {
   @EnvironmentObject private var envStore: EnvironmentStore
   @EnvironmentObject private var syncEngine: SyncEngine
-  @State private var showAddSheet    = false
-  @State private var renamingId:     UUID?   = nil
-  @State private var renameText:     String  = ""
-  @State private var deletingId:     UUID?   = nil
+  @State private var showAddSheet      = false
+  @State private var renamingId:       UUID?   = nil
+  @State private var renameText:       String  = ""
+  @State private var deletingId:       UUID?   = nil
+  @State private var showMultiSync     = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -23,6 +24,34 @@ struct EnvironmentSidebarView: View {
           .fontWeight(.semibold)
           .foregroundStyle(.secondary)
         Spacer()
+        // Multi-sync — only shown when 2+ environments exist
+        if envStore.environments.count > 1 {
+          Button {
+            showMultiSync = true
+          } label: {
+            HStack(spacing: 4) {
+              Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 10, weight: .semibold))
+              Text("Sync All")
+                .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(envStore.isSyncQueueRunning ? Color(.tertiaryLabelColor) : Color.accentColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+              RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(envStore.isSyncQueueRunning
+                      ? Color(.quaternaryLabelColor)
+                      : Color.accentColor.opacity(0.12))
+            )
+          }
+          .buttonStyle(.plain)
+          .help("Queue a sync across multiple environments")
+          .disabled(envStore.isSyncQueueRunning)
+          .popover(isPresented: $showMultiSync, arrowEdge: .trailing) {
+            MultiSyncPopover()
+          }
+        }
         Button {
           showAddSheet = true
         } label: {
@@ -33,7 +62,6 @@ struct EnvironmentSidebarView: View {
         .buttonStyle(.borderless)
         .controlSize(.small)
         .help("Add a new environment")
-        .disabled(syncEngine.isRunning)
       }
       .padding(.horizontal, 12)
       .padding(.vertical, 8)
@@ -48,6 +76,7 @@ struct EnvironmentSidebarView: View {
               env:        env,
               isActive:   env.id == envStore.activeEnvironmentId,
               isRunning:  syncEngine.isRunning && env.id == envStore.activeEnvironmentId,
+              isQueued:   envStore.syncQueue.dropFirst().contains(env.id),
               canDelete:  envStore.canDelete(env.id),
               onSelect:   { envStore.setActive(env.id) },
               onRename: {
@@ -114,6 +143,7 @@ struct EnvironmentRow: View {
   let env:       AppEnvironment
   let isActive:  Bool
   let isRunning: Bool
+  let isQueued:  Bool
   let canDelete: Bool
   let onSelect:  () -> Void
   let onRename:  () -> Void
@@ -128,6 +158,11 @@ struct EnvironmentRow: View {
         ProgressView()
           .fixedSize()
           .scaleEffect(0.55)
+          .frame(width: 12, height: 12)
+      } else if isQueued {
+        Image(systemName: "clock")
+          .font(.system(size: 10))
+          .foregroundStyle(.secondary)
           .frame(width: 12, height: 12)
       } else {
         Image(systemName: env.lastSyncStatus.icon)
@@ -327,6 +362,136 @@ struct DeleteEnvironmentSheet: View {
     }
     .padding(24)
     .frame(width: 400)
+  }
+}
+
+// MARK: - Multi-sync popover
+
+struct MultiSyncPopover: View {
+  @EnvironmentObject private var envStore:   EnvironmentStore
+  @EnvironmentObject private var syncEngine: SyncEngine
+  @Environment(\.dismiss) private var dismiss
+
+  @State private var selected: Set<UUID> = []
+
+  private var allSelected: Bool { selected.count == envStore.environments.count }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+
+      // ── Header ───────────────────────────────────────────────────────────
+      HStack {
+        Label("Run Multiple Syncs", systemImage: "arrow.triangle.2.circlepath.circle.fill")
+          .symbolRenderingMode(.hierarchical)
+          .font(.headline)
+        Spacer()
+        Button(allSelected ? "Deselect All" : "Select All") {
+          if allSelected { selected.removeAll() }
+          else           { selected = Set(envStore.environments.map(\.id)) }
+        }
+        .buttonStyle(.borderless)
+        .font(.caption)
+        .foregroundStyle(Color.accentColor)
+      }
+      .padding(.horizontal, 16)
+      .padding(.top, 16)
+      .padding(.bottom, 10)
+
+      Text("Choose environments to add to the sync queue. They will run one at a time in order.")
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+
+      Divider()
+
+      // ── Environment checklist ─────────────────────────────────────────────
+      ScrollView {
+        VStack(spacing: 0) {
+          ForEach(envStore.environments) { env in
+            let isChecked = selected.contains(env.id)
+            HStack(spacing: 10) {
+              Toggle("", isOn: Binding(
+                get: { isChecked },
+                set: { on in
+                  if on { selected.insert(env.id) }
+                  else  { selected.remove(env.id) }
+                }
+              ))
+              .toggleStyle(.checkbox)
+              .labelsHidden()
+
+              Image(systemName: env.lastSyncStatus.icon)
+                .font(.system(size: 10))
+                .foregroundStyle(env.lastSyncStatus.color)
+                .frame(width: 12)
+
+              VStack(alignment: .leading, spacing: 1) {
+                Text(env.name)
+                  .font(.callout)
+                  .foregroundStyle(.primary)
+                  .lineLimit(1)
+                Text(env.scope == .school ? "ASM" : "ABM")
+                  .font(.caption2)
+                  .foregroundStyle(.tertiary)
+              }
+
+              Spacer()
+
+              if let date = env.lastSyncedAt {
+                Text(date, style: .relative)
+                  .font(.caption2)
+                  .foregroundStyle(.tertiary)
+              }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+            .onTapGesture {
+              if isChecked { selected.remove(env.id) }
+              else         { selected.insert(env.id) }
+            }
+
+            if env.id != envStore.environments.last?.id {
+              Divider().padding(.leading, 16)
+            }
+          }
+        }
+      }
+      .frame(maxHeight: 240)
+
+      Divider()
+
+      // ── Footer ────────────────────────────────────────────────────────────
+      HStack {
+        if selected.isEmpty {
+          Text("Select at least one environment")
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+        } else {
+          Text("\(selected.count) environment\(selected.count == 1 ? "" : "s") selected")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        Spacer()
+        Button("Cancel") { dismiss() }
+          .keyboardShortcut(.escape)
+        Button("Add to Queue") {
+          let orderedIds = envStore.environments.map(\.id).filter { selected.contains($0) }
+          dismiss()
+          envStore.enqueueMultiSync(ids: orderedIds)
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(selected.isEmpty)
+        .keyboardShortcut(.return)
+      }
+      .padding(16)
+    }
+    .frame(width: 340)
+    .onAppear {
+      selected = Set(envStore.environments.map(\.id))
+    }
   }
 }
 

@@ -234,13 +234,29 @@ final class LogService: ObservableObject {
 
   // MARK: - v2.0 Per-environment LogService
 
+  /// Cache of per-environment LogService instances keyed by environment UUID.
+  /// Ensures that buildServices() and buildBackgroundServices() always return
+  /// the same instance for a given environment — so the Sync UI log window,
+  /// the active engine, and any background multi-sync engine all share one
+  /// @Published entries array and updates are visible everywhere.
+  private static var envCache: [UUID: LogService] = [:]
+
   static func makeForEnvironment(id: UUID) -> LogService {
+    if let cached = envCache[id] { return cached }
     let logsDir = FileManager.default
       .urls(for: .libraryDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Logs/AxMJamfSync/environments", isDirectory: true)
     try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
-    let logURL = logsDir.appendingPathComponent("\(id.uuidString).log")
-    return LogService(logURL: logURL, logsDir: logsDir)
+    let logURL  = logsDir.appendingPathComponent("\(id.uuidString).log")
+    let service = LogService(logURL: logURL, logsDir: logsDir)
+    envCache[id] = service
+    return service
+  }
+
+  /// Removes the cached instance for an environment — called when the environment
+  /// is deleted so the cache does not retain a LogService for a wiped env.
+  static func evictEnvironment(id: UUID) {
+    envCache.removeValue(forKey: id)
   }
 
   static func wipeEnvironmentLog(id: UUID) {
