@@ -41,6 +41,24 @@ The result: every device record in Jamf Pro shows accurate, up-to-date warranty 
 
 ---
 
+## What's new in v2.2 — Sync Queue
+
+v2.2 introduces a **serial sync queue** so multiple environments sync unattended without risk of parallel Apple API calls.
+
+- **Sync All** button in the sidebar — select environments, add them to the queue, walk away
+- **Run Sync** on any environment enqueues rather than triggering immediately — waits its turn if another sync is running
+- **In Queue** state shown on the button while waiting
+- **Stop & Save** and **Cancel All** controls in the queue progress banner, both with confirmation dialogs
+- Browse Dashboard, Devices, and Export freely on any environment while the queue runs on another
+
+---
+
+## What's new in v2.1 — MDM Server Visibility
+
+v2.1 surfaces MDM server assignment throughout the app — device list badges, filter dropdown, detail panel, dashboard card, CSV export, and sync log. Devices in AxM but not enrolled in any MDM server are marked **Unassigned**.
+
+---
+
 ## What's new in v2.0 — Multi-Environment
 
 v2.0 introduces **Environments** — fully isolated configurations for MSPs or admins who manage multiple Apple/Jamf tenants.
@@ -52,7 +70,7 @@ Each environment has its own:
 - Sync preferences and timestamps
 - Log file
 
-Switch environments instantly from the sidebar. One sync runs at a time. Existing v1 data migrates automatically into a "Default" environment on first launch — no cache wipe required.
+Switch environments instantly from the sidebar. Existing v1 data migrates automatically into a "Default" environment on first launch — no cache wipe required.
 
 ---
 
@@ -128,7 +146,11 @@ Select your team in **Signing & Capabilities**, then build with **⌘B**.
 
 Go to the **Sync** tab and click **Run Sync**.
 
-### 5 — Add more environments (v2.0)
+### 5 — Sync multiple environments at once
+
+Click **Sync All** in the sidebar header, select the environments you want, and click **Add to Queue**. Syncs run one at a time in order — browse freely while the queue runs.
+
+### 6 — Add more environments
 
 Click **+** in the sidebar, give it a name, and configure separate credentials in Setup. Each environment is fully isolated.
 
@@ -171,6 +193,7 @@ Full guides: [Project Wiki](https://github.com/karthikeyan-mac/AxMJamfSync/wiki)
 - **Do Not Refetch** — skip devices already checked, reducing API calls significantly
 - **Purchasing fields** — PO Number, PO Date, and Vendor (formatted as `"purchaseSourceType (purchaseSourceId)"`) are written to Jamf alongside warranty data
 - **External change detection** — if warranty date, vendor, PO number, or PO date are edited in Jamf after a sync, the next run re-queues those devices automatically
+- **Serial sync queue** — all syncs run serially; clicking Run Sync while another environment is syncing adds it to the queue rather than running in parallel
 
 ---
 
@@ -202,9 +225,9 @@ AxMJamfSync/
 ├── JamfService.swift             — Jamf Pro API (computers + mobile + PATCH)
 ├── SyncEngine.swift              — 4-step pipeline orchestration
 ├── LogService.swift              — Per-environment log (UI + rotating file)
-├── EnvironmentStore.swift        — Multi-environment management (v2)
+├── EnvironmentStore.swift        — Multi-environment management + sync queue (v2)
 ├── ContentView.swift             — NavigationSplitView root
-├── EnvironmentSidebarView.swift  — Environment sidebar (v2)
+├── EnvironmentSidebarView.swift  — Environment sidebar + Sync All button (v2)
 ├── SetupView.swift               — Credentials + settings UI
 ├── SyncPanelView.swift           — Sync progress and live log
 ├── DashboardView.swift           — Stats tiles and coverage ring chart
