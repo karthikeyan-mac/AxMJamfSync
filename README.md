@@ -41,6 +41,21 @@ The result: every device record in Jamf Pro shows accurate, up-to-date warranty 
 
 ---
 
+## What's new in v2.3 — Scheduling
+
+v2.3 adds **automatic scheduling** — sync every environment on a recurring cadence without opening the app.
+
+- **Friendly schedule builder** — pick "Repeat Every: Minute(s) / Hour(s) / Day(s) / Week(s) / Month(s)" and fill in the values that unit needs; no cron syntax required
+- **Advanced (Raw Cron Expression)** — a collapsible field for hand-written 5-field cron, for anyone who wants it
+- **Launch at Login** — optionally reopen AxM Jamf Sync automatically so scheduled syncs keep running unattended
+- **Menu bar icon** — always available, with Sync All Now, next/last sync times, and quick access to Settings
+- **Show in Dock** toggle — run as a normal Dock app or menu-bar-only, independent of the menu bar icon
+- Scheduled runs go through the same serial sync queue as **Sync All** — one environment at a time, never in parallel
+- **Notifications** for schedule start and completion, alongside the existing per-environment sync notifications
+- A live **Next Sync** badge in the header bar doubles as a shortcut into Settings
+
+---
+
 ## What's new in v2.2 — Sync Queue
 
 v2.2 introduces a **serial sync queue** so multiple environments sync unattended without risk of parallel Apple API calls.
@@ -78,9 +93,11 @@ Switch environments instantly from the sidebar. Existing v1 data migrates automa
 
 ![Main Interface](docs/screenshots/SetupUI.png)
 ![Sync UI](docs/screenshots/SyncUI.png)
+![Scheduler UI](docs/screenshots/ScheduleUI.png)
 ![Dashboard UI](docs/screenshots/DashboardUI.png)
 ![Devices UI](docs/screenshots/DevicesUI.png)
 ![Export UI](docs/screenshots/ExportUI.png)
+
 
 ---
 
@@ -194,7 +211,7 @@ Full guides: [Project Wiki](https://github.com/karthikeyan-mac/AxMJamfSync/wiki)
 - **Purchasing fields** — PO Number, PO Date, and Vendor (formatted as `"purchaseSourceType (purchaseSourceId)"`) are written to Jamf alongside warranty data
 - **External change detection** — if warranty date, vendor, PO number, or PO date are edited in Jamf after a sync, the next run re-queues those devices automatically
 - **Serial sync queue** — all syncs run serially; clicking Run Sync while another environment is syncing adds it to the queue rather than running in parallel
-
+- **Scheduled syncs** — set a recurring cadence in Settings → Schedule; scheduled runs go through the same serial queue as Sync All, with start and completion notifications
 ---
 
 ## Troubleshooting
@@ -232,7 +249,11 @@ AxMJamfSync/
 ├── SyncPanelView.swift           — Sync progress and live log
 ├── DashboardView.swift           — Stats tiles and coverage ring chart
 ├── DevicesView.swift             — Device table with filtering
-└── ExportView.swift              — CSV export with presets
+├── ExportView.swift              — CSV export with presets
+├── SyncScheduler.swift           — Automatic scheduling engine (cron-based, v2.3)
+├── CronExpression.swift          — 5-field POSIX cron parsing + next-fire-date (v2.3)
+├── FriendlyCronBuilderView.swift — Plain-language schedule builder UI (v2.3)
+└── AppRunModeController.swift    — Dock vs. menu-bar-only toggle (v2.3)
 ```
 ---
 
