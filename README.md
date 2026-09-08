@@ -234,7 +234,15 @@ AxMJamfSync/
 ├── DevicesView.swift             — Device table with filtering
 └── ExportView.swift              — CSV export with presets
 ```
+---
 
+## Found this useful?
+
+If this project, script, or anything I’ve shared has saved you some time or made your day a little easier, you can buy me a coffee⁠￼. ☕️
+
+[![Ko-Fi](https://img.shields.io/badge/Ko--fi-Support%20My%20Work-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/karthikeyanmac)
+
+---
 ---
 
 ## License

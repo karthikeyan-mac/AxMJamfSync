@@ -35,7 +35,7 @@ struct SetupView: View {
                 // ── Sync running banner ──────────────────────────────
                 if isRunning {
                     HStack(spacing: 8) {
-                        ProgressView().fixedSize().scaleEffect(0.8)
+                        ProgressView().controlSize(.small)
                         Text("Sync in progress — Setup is read-only.")
                             .font(.callout).foregroundStyle(.secondary)
                         Spacer()
@@ -470,7 +470,7 @@ struct AuthStatusBadge: View {
     var body: some View {
         HStack(spacing: 5) {
             if status == .testing {
-                ProgressView().fixedSize().scaleEffect(0.7)
+                ProgressView().controlSize(.mini)
                     .frame(width: 14, height: 14)
             } else if let icon = status.icon {
                 Image(systemName: icon)

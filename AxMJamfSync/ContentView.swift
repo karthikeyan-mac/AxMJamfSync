@@ -335,8 +335,9 @@ struct AppTabBar: View {
 
 // MARK: - App header bar (shown at top of every tab)
 struct AppHeaderBar: View {
-  @EnvironmentObject private var store:    AppStore
-  @EnvironmentObject private var envStore: EnvironmentStore
+  @EnvironmentObject private var store:     AppStore
+  @EnvironmentObject private var envStore:  EnvironmentStore
+  @EnvironmentObject private var scheduler: SyncScheduler
   @State private var showAbout         = false
   @State private var showStopSlotConfirm   = false
   @State private var showCancelAllConfirm  = false
@@ -375,6 +376,8 @@ struct AppHeaderBar: View {
         }
 
         Spacer()
+
+        NextSyncBadge(nextFireDate: scheduler.isEnabled ? scheduler.nextFireDate : nil)
       }
       .padding(.horizontal, 16)
       .padding(.vertical, 8)
@@ -384,8 +387,7 @@ struct AppHeaderBar: View {
         Divider()
         HStack(spacing: 8) {
           ProgressView()
-            .fixedSize()
-            .scaleEffect(0.7)
+            .controlSize(.small)
           VStack(alignment: .leading, spacing: 1) {
             if !envStore.syncQueueProgress.isEmpty {
               Text(envStore.syncQueueProgress)
@@ -498,4 +500,41 @@ struct StatusBadge: View {
             .background(color.opacity(0.15)).foregroundStyle(color)
             .clipShape(Capsule())
     }
+}
+
+// MARK: - Next Sync badge
+
+/// Shown in the header bar whenever a schedule is active — a live-updating
+/// countdown (via Text's relative date style) that opens Settings on click.
+struct NextSyncBadge: View {
+  /// nil means no active schedule — the badge still shows so it stays a
+  /// discoverable entry point into Settings, just in a neutral, inactive style.
+  let nextFireDate: Date?
+
+  private var isActive: Bool { nextFireDate != nil }
+
+  var body: some View {
+    SettingsLink {
+      Label {
+        if let nextFireDate {
+          Text("Next Sync: ") + Text(nextFireDate, style: .relative)
+        } else {
+          Text("Schedule")
+        }
+      } icon: {
+        Image(systemName: isActive ? "clock.badge.checkmark" : "clock")
+      }
+      .font(.caption)
+      .fontWeight(.medium)
+      .padding(.horizontal, 8)
+      .padding(.vertical, 4)
+      .background(isActive ? .green.opacity(0.15) : .secondary.opacity(0.1))
+      .clipShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(isActive ? .green : .secondary)
+    .help(isActive
+      ? "Scheduled for \(nextFireDate!.formatted(date: .abbreviated, time: .shortened)) — click to open Settings"
+      : "No sync schedule configured — click to set one up")
+  }
 }
