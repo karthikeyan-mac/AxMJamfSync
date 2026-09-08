@@ -28,6 +28,11 @@
 		B019 /* TLSDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A021 /* TLSDelegate.swift */; };
 		B020 /* EnvironmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A022 /* EnvironmentStore.swift */; };
 		B021 /* EnvironmentSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A023 /* EnvironmentSidebarView.swift */; };
+		B032 /* SyncScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A025 /* SyncScheduler.swift */; };
+		B033 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A026 /* SettingsView.swift */; };
+		B034 /* CronExpression.swift in Sources */ = {isa = PBXBuildFile; fileRef = A027 /* CronExpression.swift */; };
+		B036 /* AppRunModeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A029 /* AppRunModeController.swift */; };
+		B037 /* FriendlyCronBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A030 /* FriendlyCronBuilderView.swift */; };
 		B030 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */; };
 		B031 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A024 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
@@ -56,6 +61,11 @@
 		A021 /* TLSDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSDelegate.swift; sourceTree = "<group>"; };
 		A022 /* EnvironmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentStore.swift; sourceTree = "<group>"; };
 		A023 /* EnvironmentSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentSidebarView.swift; sourceTree = "<group>"; };
+		A025 /* SyncScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncScheduler.swift; sourceTree = "<group>"; };
+		A026 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A027 /* CronExpression.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CronExpression.swift; sourceTree = "<group>"; };
+		A029 /* AppRunModeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRunModeController.swift; sourceTree = "<group>"; };
+		A030 /* FriendlyCronBuilderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendlyCronBuilderView.swift; sourceTree = "<group>"; };
 		A024 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		PROD /* AxMJamfSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AxMJamfSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -114,6 +124,11 @@
 				A021 /* TLSDelegate.swift */,
 				A022 /* EnvironmentStore.swift */,
 				A023 /* EnvironmentSidebarView.swift */,
+				A025 /* SyncScheduler.swift */,
+				A026 /* SettingsView.swift */,
+				A027 /* CronExpression.swift */,
+				A029 /* AppRunModeController.swift */,
+				A030 /* FriendlyCronBuilderView.swift */,
 				A024 /* PrivacyInfo.xcprivacy */,
 				CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */,
 			);
@@ -211,6 +226,11 @@
 				B019 /* TLSDelegate.swift in Sources */,
 				B020 /* EnvironmentStore.swift in Sources */,
 				B021 /* EnvironmentSidebarView.swift in Sources */,
+				B032 /* SyncScheduler.swift in Sources */,
+				B033 /* SettingsView.swift in Sources */,
+				B034 /* CronExpression.swift in Sources */,
+				B036 /* AppRunModeController.swift in Sources */,
+				B037 /* FriendlyCronBuilderView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -323,7 +343,7 @@
 				CODE_SIGN_ENTITLEMENTS = AxMJamfSync/AxMJamfSync.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -339,7 +359,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.2;
+				MARKETING_VERSION = 2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
 				PRODUCT_NAME = "AxM Jamf Sync";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -355,7 +375,7 @@
 				CODE_SIGN_ENTITLEMENTS = AxMJamfSync/AxMJamfSync.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -371,7 +391,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.2;
+				MARKETING_VERSION = 2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
 				PRODUCT_NAME = "AxM Jamf Sync";
 				SWIFT_EMIT_LOC_STRINGS = YES;

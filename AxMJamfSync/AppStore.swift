@@ -32,6 +32,12 @@ final class AppStore: ObservableObject {
     // MARK: - Device data
     @Published var devices:         [Device]        = []   // full list, main thread
     @Published var filteredDevices: [Device]        = []   // debounced filtered result
+    /// Bumped every time filteredDevices is reassigned after a filter/search change.
+    /// DeviceListPanel keys its List on this so SwiftUI remounts fresh instead of
+    /// diffing old-vs-new row identities — the diff itself (not its animation) is
+    /// what beachballs when the array swings from a small filtered set back to a
+    /// large unfiltered one (e.g. clearing a filter on a 20k+ device environment).
+    @Published private(set) var filterGeneration: Int = 0
     @Published var stats:           DashboardStats  = DashboardStats()
     @Published var hasData:         Bool            = false  // false after wipeCache / before first sync
 
@@ -273,7 +279,8 @@ final class AppStore: ObservableObject {
                 return true
             }
         }
-        self.filteredDevices = result
+        filteredDevices  = result
+        filterGeneration += 1
     }
 
     // MARK: - CoreData upsert (background context, chunked batch — O(n) at 60k scale)
@@ -394,7 +401,15 @@ final class AppStore: ObservableObject {
                     return true
                 }
             }
-            await MainActor.run { [weak self] in self?.filteredDevices = result }
+            // DeviceListPanel keys its List on filterGeneration, forcing a full remount
+            // instead of an old-vs-new row diff — the diff itself (not its animation)
+            // is what beachballs when the array swings from a small filtered set back
+            // to a large unfiltered one (e.g. clearing a filter on a 20k+ environment).
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.filteredDevices  = result
+                self.filterGeneration += 1
+            }
         }
     }
 
