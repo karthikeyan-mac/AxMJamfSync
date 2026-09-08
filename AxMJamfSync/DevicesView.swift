@@ -346,33 +346,18 @@ struct DeviceListPanel: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else {
-            // H1: Guard against materialising 50k+ SwiftUI List rows at once.
-            // SwiftUI List is lazy for scroll but still builds the full cell graph above ~15k rows,
-            // causing a noticeable freeze. When the unfiltered list is enormous, prompt the user
-            // to apply a filter before rendering — the filtered path is always fast.
-            if store.filteredDevices.count > 15_000 && store.deviceSearchText.isEmpty &&
-               store.deviceSourceFilter == nil && store.coverageFilter == nil && store.wbFilter == nil {
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.orange)
-                    Text("\(store.filteredDevices.count) devices")
-                        .font(.headline)
-                    Text("Apply a filter or search to narrow the list before viewing.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 280)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List(store.filteredDevices, id: \.serialNumber, selection: $selectedDevice) { device in
-                    DeviceRow(device: device)
-                        .equatable()
-                        .tag(device)
-                }
-                .listStyle(.inset)
+            List(store.filteredDevices, id: \.serialNumber, selection: $selectedDevice) { device in
+                DeviceRow(device: device)
+                    .equatable()
+                    .tag(device)
             }
+            .listStyle(.inset)
+            // Force a full remount on every completed filter/search change rather than
+            // letting List diff old-vs-new row identities — that diff (not its animation)
+            // is what beachballs when the array swings from a small filtered set back to
+            // a large unfiltered one. Since List is lazy, remounting only actually builds
+            // the rows currently in view, not the whole array.
+            .id(store.filterGeneration)
         }
     }
 }

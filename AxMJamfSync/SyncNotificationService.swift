@@ -10,6 +10,34 @@ import os
 
 enum SyncNotificationService {
 
+    // MARK: - Schedule triggered
+    // Fired once per scheduled run, before the queue starts — distinct from the
+    // per-environment completion/error notifications below, which still fire once
+    // per environment as the queue works through them.
+    static func sendScheduleTriggered(environmentNames: [String]) {
+        let content = UNMutableNotificationContent()
+        content.title = "Scheduled Sync Starting"
+        content.body  = environmentNames.count == 1
+            ? "Syncing \(environmentNames[0])…"
+            : "Syncing \(environmentNames.count) environments: \(environmentNames.joined(separator: ", "))"
+        content.sound = .default
+        sendNotification(content, id: "schedule-triggered")
+    }
+
+    // MARK: - Schedule completed
+    // Fired once when every environment in a scheduled run has finished — a
+    // summary on top of the per-environment completion/error notifications
+    // below, which still fire individually as the queue works through them.
+    static func sendScheduleCompleted(environmentCount: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = "Scheduled Sync Complete"
+        content.body  = environmentCount == 1
+            ? "Finished syncing 1 environment."
+            : "Finished syncing \(environmentCount) environments."
+        content.sound = .default
+        sendNotification(content, id: "schedule-completed")
+    }
+
     // MARK: - Completion (success)
     static func sendCompletion(devices: Int, coverage: Int, writeback: Int) {
         // Bounce dock icon once
