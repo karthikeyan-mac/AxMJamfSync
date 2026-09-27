@@ -37,6 +37,10 @@ private struct GeneralSettingsTab: View {
               .font(.caption)
               .foregroundStyle(.secondary)
           }
+          // Without this, VoiceOver's default flattening of a two-line label
+          // (title + description) isn't guaranteed to read as one clean
+          // statement — this makes the combination explicit and intentional.
+          .accessibilityElement(children: .combine)
         }
       }
 
@@ -51,8 +55,11 @@ private struct GeneralSettingsTab: View {
               .font(.caption)
               .foregroundStyle(.secondary)
           }
+          .accessibilityElement(children: .combine)
         }
       }
+
+      UpdateSettingsSection()
     }
     .formStyle(.grouped)
     .onAppear { scheduler.refreshLaunchAtLoginStatus() }
@@ -63,6 +70,38 @@ private struct GeneralSettingsTab: View {
       Button("OK") { scheduler.launchAtLoginError = nil }
     } message: {
       Text(scheduler.launchAtLoginError ?? "")
+    }
+  }
+}
+
+private struct UpdateSettingsSection: View {
+  @EnvironmentObject private var updates: UpdateChecker
+
+  var body: some View {
+    Section {
+      Toggle(isOn: Binding(
+        get: { updates.autoCheckEnabled },
+        set: { updates.autoCheckEnabled = $0 }
+      )) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Check for Updates Automatically")
+          Text("Once a day, asks GitHub whether a newer release exists. Nothing is downloaded or installed, and no device or Jamf data is sent.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+      }
+
+      HStack {
+        Text(updates.statusText)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Spacer()
+        Button("Check Now") {
+          Task { await updates.check(userInitiated: true) }
+        }
+        .disabled(updates.state == .checking)
+      }
     }
   }
 }

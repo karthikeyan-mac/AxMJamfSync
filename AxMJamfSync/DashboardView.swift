@@ -546,35 +546,46 @@ struct GlobalSyncButton: View {
         return envStore.syncQueue.dropFirst().contains(envId)
     }
 
+    /// A `--silent` process (not this GUI) currently holds this environment's sync
+    /// lock. Distinct from engine.isRunning, which is this process's own state.
+    private var isLockedExternally: Bool {
+        guard let envId = store.environmentId else { return false }
+        return envStore.externallyLockedEnvironments.contains(envId)
+    }
+
     // MARK: State-derived appearance
 
     private var buttonLabel: String {
-        if engine.isRunning { return "Stop Sync" }
-        if isQueued          { return "In Queue"  }
+        if engine.isRunning      { return "Stop Sync" }
+        if isLockedExternally    { return "Syncing (CLI)" }
+        if isQueued               { return "In Queue"  }
         return "Run Sync"
     }
 
     private var buttonIcon: String {
-        if engine.isRunning { return "stop.circle.fill"                        }
-        if isQueued          { return "clock.badge.checkmark"                  }
+        if engine.isRunning      { return "stop.circle.fill"                        }
+        if isLockedExternally    { return "terminal.fill"                           }
+        if isQueued               { return "clock.badge.checkmark"                  }
         return "arrow.triangle.2.circlepath.circle.fill"
     }
 
     private var buttonTint: Color {
-        if engine.isRunning { return .red                       }
-        if isQueued          { return Color(.secondaryLabelColor) }
-        if !canRun           { return Color(.tertiaryLabelColor) }
+        if engine.isRunning      { return .red                       }
+        if isLockedExternally    { return Color(.secondaryLabelColor) }
+        if isQueued               { return Color(.secondaryLabelColor) }
+        if !canRun                { return Color(.tertiaryLabelColor) }
         return .accentColor
     }
 
     private var isDisabled: Bool {
-        isQueued || envStore.persistenceLoadFailed || (!canRun && !engine.isRunning)
+        isLockedExternally || isQueued || envStore.persistenceLoadFailed || (!canRun && !engine.isRunning)
     }
 
     private var helpText: String {
-        if engine.isRunning { return "Stop the sync in progress — devices fetched so far will be saved" }
-        if isQueued          { return "This environment is waiting in the sync queue"                    }
-        if canRun            { return "Sync devices from Apple and Jamf, check warranty coverage, and update Jamf" }
+        if engine.isRunning      { return "Stop the sync in progress — devices fetched so far will be saved" }
+        if isLockedExternally    { return "A command-line sync (--silent) is already running for this environment" }
+        if isQueued               { return "This environment is waiting in the sync queue"                    }
+        if canRun                 { return "Sync devices from Apple and Jamf, check warranty coverage, and update Jamf" }
         return "Enter your Apple and Jamf credentials in Setup before running a sync"
     }
 
@@ -582,7 +593,7 @@ struct GlobalSyncButton: View {
         Button {
             if engine.isRunning {
                 showStopConfirm = true
-            } else if !isQueued {
+            } else if !isQueued && !isLockedExternally {
                 if let envId = store.environmentId {
                     envStore.enqueue(envId)
                 } else {

@@ -26,6 +26,13 @@ final class AppStore: ObservableObject {
     let log:           LogService
     /// Non-nil when running in multi-environment mode (v2.0+).
     let environmentId: UUID?
+    /// For log readability only (SyncEngine's run header) — never used for any
+    /// lookup or identity decision, environmentId is. Captured once at construction,
+    /// so a same-session rename doesn't retroactively update it until this
+    /// environment's services are next rebuilt (switching to it, or relaunch) —
+    /// acceptable since it's cosmetic, and log files stay UUID-stemmed regardless
+    /// (S9 — names are mutable/can collide, UUIDs are the stable identity).
+    let environmentName: String
 
     // MARK: - Credentials
     @Published var axmCredentials:  AxMCredentials
@@ -241,10 +248,11 @@ final class AppStore: ObservableObject {
     /// Placeholder init — uses an in-memory store so it never accidentally
     /// opens the v1 shared store. Replaced by buildServices() in EnvironmentStore.
     init(persistence: PersistenceController = PersistenceController(inMemory: true), prefs: AppPreferences? = nil) {
-        self.persistence   = persistence
-        self.prefs         = prefs ?? AppPreferences()
-        self.environmentId = nil
-        self.log           = .shared
+        self.persistence     = persistence
+        self.prefs           = prefs ?? AppPreferences()
+        self.environmentId   = nil
+        self.environmentName = "Default"
+        self.log             = .shared
         self.axmCredentials  = KeychainService.loadAxMCredentials()
         self.jamfCredentials = KeychainService.loadJamfCredentials()
 
@@ -313,10 +321,11 @@ final class AppStore: ObservableObject {
     /// Per-environment init (v2.0) — uses isolated PersistenceController, AppPreferences,
     /// and credentials keyed by environment UUID.
     init(environment: AppEnvironment, persistence: PersistenceController, prefs: AppPreferences) {
-        self.persistence   = persistence
-        self.prefs         = prefs
-        self.environmentId = environment.id
-        self.log           = LogService.makeForEnvironment(id: environment.id)
+        self.persistence     = persistence
+        self.prefs           = prefs
+        self.environmentId   = environment.id
+        self.environmentName = environment.name
+        self.log             = LogService.makeForEnvironment(id: environment.id)
 
         self.axmCredentials  = KeychainService.loadAxMCredentialsForEnv(id: environment.id, scope: environment.scope)
         self.jamfCredentials = KeychainService.loadJamfCredentialsForEnv(id: environment.id)
@@ -1388,7 +1397,7 @@ final class AppStore: ObservableObject {
         // built against the old host and must not be used for write-back until it is
         // re-confirmed against the new one (S2 — see ARCHITECTURE.md).
         prefs.jamfValidatedOrigin = newOrigin
-        log.warn("Jamf connection changed — write-back paused for all devices until the serial→Jamf-ID mapping is re-confirmed against the new host. Starting a full Jamf re-fetch…")
+        log.warn("Jamf connection changed — write-back paused for all devices until the serial→Jamf-ID mapping is re-confirmed against the new host. The next Run Sync will do a full Jamf re-fetch — Test Auth alone only verifies credentials, it doesn't re-fetch devices.")
         Task {
             await persistence.markJamfMappingsPendingRevalidation()
             await loadDevicesFromCoreDataSync()

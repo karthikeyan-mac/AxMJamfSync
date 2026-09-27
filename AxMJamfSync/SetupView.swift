@@ -11,8 +11,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SetupView: View {
-    @EnvironmentObject private var store:  AppStore
-    @EnvironmentObject private var prefs:  AppPreferences
+    @EnvironmentObject private var store:    AppStore
+    @EnvironmentObject private var prefs:    AppPreferences
+    @EnvironmentObject private var envStore: EnvironmentStore
     @ObservedObject    var engine: SyncEngine
     let navigateToSync: () -> Void
 
@@ -22,7 +23,11 @@ struct SetupView: View {
         // AttributeGraph cycle on macOS 14 that occurs when .disabled/.opacity
         // modifiers on a container depend on one ObservableObject (engine) while
         // the container's children observe a different ObservableObject (store).
-        let isRunning = engine.isRunning
+        // isRunningHere/isLockedExternally are split out only to pick the right
+        // banner text below — panels still get one combined plain Bool.
+        let isRunningHere = engine.isRunning
+        let isLockedExternally = store.environmentId.map { envStore.externallyLockedEnvironments.contains($0) } ?? false
+        let isRunning = isRunningHere || isLockedExternally
         VStack(spacing: 0) {
             ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -33,7 +38,7 @@ struct SetupView: View {
                 .padding(.horizontal, 24).padding(.top, 16)
 
                 // ── Sync running banner ──────────────────────────────
-                if isRunning {
+                if isRunningHere {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
                         Text("Sync in progress — Setup is read-only.")
@@ -41,6 +46,19 @@ struct SetupView: View {
                         Spacer()
                         Button("View Sync") { navigateToSync() }
                             .buttonStyle(.bordered)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(Color.accentColor.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.horizontal, 24)
+                } else if isLockedExternally {
+                    // No "View Sync" button here — there's nothing to view in this
+                    // process; the sync is another (--silent) process's own engine.
+                    HStack(spacing: 8) {
+                        Image(systemName: "terminal.fill").foregroundStyle(.secondary)
+                        Text("A command-line sync is running for this environment — Setup is read-only until it finishes.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        Spacer()
                     }
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(Color.accentColor.opacity(0.08))
@@ -152,8 +170,9 @@ struct AxMCredentialsPanel: View {
                             // Persist scope to env-namespaced Keychain key
                             if let envId = store.environmentId {
                                 KeychainService.saveForEnv(scope.rawValue, key: "axm.scope", envId: envId)
+                            } else {
+                                KeychainService.save(scope.rawValue, for: .axmScope)
                             }
-                            KeychainService.save(scope.rawValue, for: .axmScope)
                             // Persist scope change to AppEnvironment so buildServices
                             // loads the correct scope on next switch or relaunch
                             if let envId = store.environmentId {

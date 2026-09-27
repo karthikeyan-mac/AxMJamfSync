@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  AxM Jamf Sync — sample LaunchAgent: scheduled sync (silent flag)
+
+  Syncs every environment with no UI, writing warranty/purchase data back to Jamf
+  Pro — the same as Run Sync in the app, just unattended.
+
+  Don't also combine this with the in-app scheduler (Settings > Schedule) — running
+  both syncs everything twice.
+
+  Install (as the logged-in user; a LaunchAgent, not a LaunchDaemon):
+    cp com.karthikmac.axmjamfsync.silent.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.karthikmac.axmjamfsync.silent.plist
+
+  Run it once now to test:
+    launchctl kickstart -k gui/$(id -u)/com.karthikmac.axmjamfsync.silent
+
+  Remove:
+    launchctl bootout gui/$(id -u)/com.karthikmac.axmjamfsync.silent
+    rm ~/Library/LaunchAgents/com.karthikmac.axmjamfsync.silent.plist
+
+  Edit the Hour/Minute below for your schedule, and the app path if it isn't in
+  /Applications. Output goes to the app's own logs (lines tagged [CLI]) under
+  ~/Library/Containers/com.karthikmac.axmjamfsync/Data/Library/Logs/AxMJamfSync/;
+  the file below holds stderr: startup errors such as "no environments configured",
+  plus harmless CoreData debug chatter.
+  Exit codes: 0 success/skipped, 1 partial, 2 failed, 3 cancelled, 64 bad usage,
+  78 no environment configured.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.karthikmac.axmjamfsync.silent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Applications/AxM Jamf Sync.app/Contents/MacOS/AxM Jamf Sync</string>
+    <string>--silent</string>
+  </array>
+
+  <!-- Every day at 01:00. Add more <dict>s inside an <array> for several times a day. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>1</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/com.karthikmac.axmjamfsync.silent.err</string>
+</dict>
+</plist>
