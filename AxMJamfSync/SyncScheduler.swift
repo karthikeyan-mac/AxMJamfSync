@@ -77,14 +77,12 @@ final class SyncScheduler: ObservableObject {
     let savedCron = ud.string(forKey: SchedulePrefKey.cronExpr).flatMap(CronExpression.init(parsing:)) ?? .dailyAt9AM
     cronExpression = savedCron
     cronText       = savedCron.rawValue
-    // Stored as a real Date (a native plist <date>, via UserDefaults' own Any?
-    // bridging) rather than a raw epoch Double — Apple's own default for a Date
-    // handed straight to a plist-backed store. An old install's pre-existing
-    // Double under these same keys just reads back as nil here (the `as? Date`
-    // cast fails), which is harmless: nextFireDate recomputes fresh on next
-    // start(), lastFireDate shows "never" once, and both self-heal from there.
-    nextFireDate = ud.object(forKey: SchedulePrefKey.nextFireEpoch) as? Date
-    lastFireDate = ud.object(forKey: SchedulePrefKey.lastFireEpoch) as? Date
+    // Written as an epoch Double so v2.5 (which reads ud.double) can still read
+    // it after a downgrade; a native Date written by an earlier v3.0 build is
+    // still accepted here. See ARCHITECTURE.md on keeping persisted shapes
+    // readable by the previous release.
+    nextFireDate = Self.storedDate(ud, SchedulePrefKey.nextFireEpoch)
+    lastFireDate = Self.storedDate(ud, SchedulePrefKey.lastFireEpoch)
     refreshLaunchAtLoginStatus()
   }
 
@@ -184,7 +182,7 @@ final class SyncScheduler: ObservableObject {
     guard isEnabled, let next = nextFireDate, Date() >= next else { return }
     fireScheduledSync()
     lastFireDate = Date()
-    ud.set(lastFireDate!, forKey: SchedulePrefKey.lastFireEpoch)
+    ud.set(lastFireDate!.timeIntervalSince1970, forKey: SchedulePrefKey.lastFireEpoch)
     nextFireDate = computeNextFireDate()
     persistNextFire()
   }
@@ -235,8 +233,12 @@ final class SyncScheduler: ObservableObject {
   }
 
   private func persistNextFire() {
-    // set(nil, forKey:) removes the key — the correct way to express "no
-    // schedule", cleaner than the old magic-0-sentinel-plus->0-check pattern.
-    ud.set(nextFireDate, forKey: SchedulePrefKey.nextFireEpoch)
+    ud.set(nextFireDate?.timeIntervalSince1970 ?? 0, forKey: SchedulePrefKey.nextFireEpoch)
+  }
+
+  private static func storedDate(_ ud: UserDefaults, _ key: String) -> Date? {
+    if let date = ud.object(forKey: key) as? Date { return date }
+    let epoch = ud.double(forKey: key)
+    return epoch > 0 ? Date(timeIntervalSince1970: epoch) : nil
   }
 }

@@ -38,23 +38,20 @@ struct AppEnvironment: Identifiable, Codable, Equatable {
 
   // MARK: - JSON coding
   //
-  // JSONEncoder's default Date strategy (.deferredToDate) writes a raw Double —
-  // timeIntervalSinceReferenceDate, the 2001 epoch — with nothing in the value
-  // itself to say so. Every install's v2.environments already has data in that
-  // format, so switching the encoder to Apple's actual recommendation, .iso8601,
-  // needs a decoder that still understands the old shape too, or every existing
-  // environment's createdAt/lastSyncedAt breaks on first read after upgrading.
-  // These are shared by every encode/decode of [AppEnvironment] — EnvironmentStore
-  // (list persistence, headless status merge, external-run diffing) and
-  // DiagnosticsExporter. A decode-then-encode cycle (which save() does on every
-  // change) transparently rewrites old data to the new format — no explicit
-  // migration step needed.
+  // The encoder MUST keep JSONEncoder's default Date strategy (.deferredToDate —
+  // a bare Double, timeIntervalSinceReferenceDate). v2.5 and earlier decode
+  // v2.environments with a plain JSONDecoder(); an ISO8601 string makes the whole
+  // list fail to decode there, and v2.5 then treats it as a first launch and runs
+  // the v1 migration over real data. Shipped once in a v3.0 build and wiped a
+  // user's environment list on downgrade — see ARCHITECTURE.md. The decoder still
+  // accepts ISO8601 strings so any list that build wrote reads back fine, and
+  // save() rewrites it in the old format on the next change.
+  // Shared by every encode/decode of [AppEnvironment] — EnvironmentStore (list
+  // persistence, headless status merge, external-run diffing) and DiagnosticsExporter.
   nonisolated(unsafe) private static let isoFmt: ISO8601DateFormatter = ISO8601DateFormatter()
 
   static var jsonEncoder: JSONEncoder {
-    let e = JSONEncoder()
-    e.dateEncodingStrategy = .iso8601
-    return e
+    JSONEncoder()
   }
 
   static var jsonDecoder: JSONDecoder {
@@ -286,6 +283,14 @@ final class EnvironmentStore: ObservableObject {
       }
     load()
     if environments.isEmpty {
+      // "No usable list" is not "first launch": an undecodable list or existing
+      // environment stores mean real data, and the v1 migration would overwrite
+      // both the list and the …0001 store. Refuse instead — see ARCHITECTURE.md.
+      if let reason = Self.v1MigrationRefusal(listPresent: ud.object(forKey: listKey) != nil) {
+        os_log(.error, "[EnvironmentStore] v1 migration refused — %{public}@", reason)
+        migrationError = reason
+        return
+      }
       // First v2.0 launch — migration runs async; buildServices called at end of runMigration()
       migrateFromV1()
       return
@@ -937,6 +942,18 @@ final class EnvironmentStore: ObservableObject {
     migrationError  = message
     migrationStatus = ""
     isMigrating     = false
+  }
+
+  /// Non-nil when the v1→v2 migration must not run because v2 data already exists.
+  private static func v1MigrationRefusal(listPresent: Bool) -> String? {
+    if listPresent {
+      return "The saved environment list couldn’t be read — it may have been written by a newer version of AxM Jamf Sync. Your environments were left untouched."
+    }
+    let stores = (try? FileManager.default.contentsOfDirectory(atPath: PersistenceController.environmentsDirectory.path)) ?? []
+    if stores.contains(where: { $0.hasSuffix(".sqlite") && !$0.hasSuffix(".staging.sqlite") }) {
+      return "Environment data already exists but the environment list is missing. Your environments were left untouched."
+    }
+    return nil
   }
 
   // kept for internal use — non-migration path
