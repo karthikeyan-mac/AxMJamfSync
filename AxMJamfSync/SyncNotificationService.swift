@@ -11,6 +11,9 @@ import os
 @MainActor
 enum SyncNotificationService {
 
+    /// Set by the `--silent` headless run — no notification may be posted from it.
+    static var isSuppressed = false
+
     // MARK: - Schedule triggered
     // Fired once per scheduled run, before the queue starts — distinct from the
     // per-environment completion/error notifications below, which still fire once
@@ -40,6 +43,7 @@ enum SyncNotificationService {
 
     // MARK: - Completion (success)
     static func sendCompletion(devices: Int, coverage: Int, writeback: Int) {
+        guard !isSuppressed else { return }   // before any NSApp touch — see sendError's note
         NSApp.requestUserAttention(.informationalRequest)   // bounce dock icon once
 
         let content = UNMutableNotificationContent()
@@ -53,6 +57,7 @@ enum SyncNotificationService {
     // A run that landed real data but did not fully complete — distinct from both a
     // clean success and an outright failure.
     static func sendPartial(detail: String) {
+        guard !isSuppressed else { return }
         NSApp.requestUserAttention(.informationalRequest)
         let content = UNMutableNotificationContent()
         content.title = "AxM Sync — Completed with Issues"
@@ -66,7 +71,15 @@ enum SyncNotificationService {
     // (existing cache is untouched), so an insistent bounce-until-focused
     // request overstates the severity. The notification itself still uses
     // .defaultCritical sound so it's not silent.
+    // `isSuppressed` is checked here too, not just inside sendNotification() below — a
+    // `--silent` run must never touch `NSApp` at all. Referencing the `NSApp` global
+    // lazily instantiates NSApplication.shared on first touch even if nothing ever calls
+    // NSApplication.shared directly, and HeadlessRunner deliberately never does (S-headless-2:
+    // a headless process that's a real NSApplication is addressable by an Apple Event sent to
+    // the bundle ID, e.g. a Quit or reopen meant for the GUI — the OS can't tell them apart
+    // and may kill the headless one silently. Cost a real interrupted overnight sync to find.)
     static func sendError(message: String) {
+        guard !isSuppressed else { return }
         NSApp.requestUserAttention(.informationalRequest)
 
         let content = UNMutableNotificationContent()
@@ -78,6 +91,7 @@ enum SyncNotificationService {
 
     // MARK: - Private
     private static func sendNotification(_ content: UNMutableNotificationContent, id: String) {
+        guard !isSuppressed else { return }
         // Attach the app icon so Notification Centre shows it alongside the alert.
         // On macOS the system uses the app bundle icon automatically for sandboxed apps,
         // but writing it explicitly as an attachment guarantees it appears.

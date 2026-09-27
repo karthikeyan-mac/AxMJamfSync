@@ -132,6 +132,18 @@ struct ContentView: View {
       Text((envStore.persistenceLoadFailureMessage.map { $0 + "\n\n" } ?? "")
            + "Syncing is disabled until the app is relaunched. Your existing data is not shown.")
     }
+    // A `--silent`/LaunchAgent run that never got as far as attempting a sync —
+    // see HeadlessStartupFailure. One-shot: envStore already cleared it from
+    // UserDefaults the moment it was read, so dismissing here is just local state.
+    .alert("A scheduled sync didn't start",
+           isPresented: Binding(get: { envStore.headlessStartupFailure != nil },
+                                set: { if !$0 { envStore.dismissHeadlessStartupFailure() } })) {
+      Button("OK", role: .cancel) { envStore.dismissHeadlessStartupFailure() }
+    } message: {
+      if let failure = envStore.headlessStartupFailure {
+        Text("\(failure.date.formatted(date: .abbreviated, time: .shortened)): \(failure.message)")
+      }
+    }
     // Blocking migration overlay — shown only on first v1→v2 launch
     .overlay {
       if envStore.isMigrating || envStore.migrationError != nil {

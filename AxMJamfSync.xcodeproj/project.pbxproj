@@ -28,6 +28,8 @@
 		B019 /* TLSDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A021 /* TLSDelegate.swift */; };
 		B020 /* EnvironmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A022 /* EnvironmentStore.swift */; };
 		B021 /* EnvironmentSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A023 /* EnvironmentSidebarView.swift */; };
+		B030 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */; };
+		B031 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A024 /* PrivacyInfo.xcprivacy */; };
 		B032 /* SyncScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A025 /* SyncScheduler.swift */; };
 		B033 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A026 /* SettingsView.swift */; };
 		B034 /* CronExpression.swift in Sources */ = {isa = PBXBuildFile; fileRef = A027 /* CronExpression.swift */; };
@@ -38,8 +40,8 @@
 		B040 /* DashboardChartViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A033 /* DashboardChartViews.swift */; };
 		B041 /* SyncOutcome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A034 /* SyncOutcome.swift */; };
 		B042 /* DiagnosticsExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A028 /* DiagnosticsExporter.swift */; };
-		B030 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */; };
-		B031 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A024 /* PrivacyInfo.xcprivacy */; };
+		B043 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A040 /* UpdateChecker.swift */; };
+		B050 /* HeadlessMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = A050 /* HeadlessMode.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -57,11 +59,6 @@
 		A012 /* DevicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicesView.swift; sourceTree = "<group>"; };
 		A013 /* ExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportView.swift; sourceTree = "<group>"; };
 		A014 /* SyncPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncPanelView.swift; sourceTree = "<group>"; };
-		A035 /* AxMJamfSync.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = AxMJamfSync.xcdatamodel; sourceTree = "<group>"; };
-		A036 /* AxMJamfSync 2.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "AxMJamfSync 2.xcdatamodel"; sourceTree = "<group>"; };
-		A037 /* AxMJamfSync 3.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "AxMJamfSync 3.xcdatamodel"; sourceTree = "<group>"; };
-		A038 /* AxMJamfSync 4.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "AxMJamfSync 4.xcdatamodel"; sourceTree = "<group>"; };
-		A039 /* AxMJamfSync 5.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "AxMJamfSync 5.xcdatamodel"; sourceTree = "<group>"; };
 		A016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A017 /* AxMJamfSync.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AxMJamfSync.entitlements; sourceTree = "<group>"; };
 		A018 /* ABMService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ABMService.swift; sourceTree = "<group>"; };
@@ -70,19 +67,26 @@
 		A021 /* TLSDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSDelegate.swift; sourceTree = "<group>"; };
 		A022 /* EnvironmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentStore.swift; sourceTree = "<group>"; };
 		A023 /* EnvironmentSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentSidebarView.swift; sourceTree = "<group>"; };
+		A024 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A025 /* SyncScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncScheduler.swift; sourceTree = "<group>"; };
 		A026 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A027 /* CronExpression.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CronExpression.swift; sourceTree = "<group>"; };
+		A028 /* DiagnosticsExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsExporter.swift; sourceTree = "<group>"; };
 		A029 /* AppRunModeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRunModeController.swift; sourceTree = "<group>"; };
 		A030 /* FriendlyCronBuilderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendlyCronBuilderView.swift; sourceTree = "<group>"; };
 		A031 /* AxMDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AxMDashboardView.swift; sourceTree = "<group>"; };
 		A032 /* JamfDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JamfDashboardView.swift; sourceTree = "<group>"; };
 		A033 /* DashboardChartViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardChartViews.swift; sourceTree = "<group>"; };
 		A034 /* SyncOutcome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncOutcome.swift; sourceTree = "<group>"; };
-		A028 /* DiagnosticsExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsExporter.swift; sourceTree = "<group>"; };
-		A024 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A035 /* AxMJamfSync.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = AxMJamfSync.xcdatamodel; sourceTree = "<group>"; };
+		A036 /* AxMJamfSync 2.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "AxMJamfSync 2.xcdatamodel"; sourceTree = "<group>"; };
+		A037 /* AxMJamfSync 3.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "AxMJamfSync 3.xcdatamodel"; sourceTree = "<group>"; };
+		A038 /* AxMJamfSync 4.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "AxMJamfSync 4.xcdatamodel"; sourceTree = "<group>"; };
+		A039 /* AxMJamfSync 5.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "AxMJamfSync 5.xcdatamodel"; sourceTree = "<group>"; };
+		A040 /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
+		A050 /* HeadlessMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadlessMode.swift; sourceTree = "<group>"; };
 		CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		PROD /* AxMJamfSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AxMJamfSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		PROD /* AxM Jamf Sync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AxM Jamf Sync.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -99,7 +103,7 @@
 		GRP_PROD /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				PROD /* AxMJamfSync.app */,
+				PROD /* AxM Jamf Sync.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -147,6 +151,8 @@
 				A032 /* JamfDashboardView.swift */,
 				A033 /* DashboardChartViews.swift */,
 				A034 /* SyncOutcome.swift */,
+				A050 /* HeadlessMode.swift */,
+				A040 /* UpdateChecker.swift */,
 				A028 /* DiagnosticsExporter.swift */,
 				A024 /* PrivacyInfo.xcprivacy */,
 				CEC1B53C2F5CB1AF00566E8D /* Assets.xcassets */,
@@ -171,7 +177,7 @@
 			);
 			name = AxMJamfSync;
 			productName = "AxM Jamf Sync";
-			productReference = PROD /* AxMJamfSync.app */;
+			productReference = PROD /* AxM Jamf Sync.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -182,7 +188,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
-				LastUpgradeCheck = 2630;
+				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					TGT1 = {
 						CreatedOnToolsVersion = 15.0;
@@ -254,6 +260,8 @@
 				B039 /* JamfDashboardView.swift in Sources */,
 				B040 /* DashboardChartViews.swift in Sources */,
 				B041 /* SyncOutcome.swift in Sources */,
+				B050 /* HeadlessMode.swift in Sources */,
+				B043 /* UpdateChecker.swift in Sources */,
 				B042 /* DiagnosticsExporter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -265,6 +273,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
@@ -317,6 +326,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
@@ -367,7 +377,7 @@
 				CODE_SIGN_ENTITLEMENTS = AxMJamfSync/AxMJamfSync.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -380,7 +390,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.5;
+				MARKETING_VERSION = 3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
 				PRODUCT_NAME = "AxM Jamf Sync";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -397,7 +407,7 @@
 				CODE_SIGN_ENTITLEMENTS = AxMJamfSync/AxMJamfSync.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -410,7 +420,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.5;
+				MARKETING_VERSION = 3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.karthikmac.axmjamfsync;
 				PRODUCT_NAME = "AxM Jamf Sync";
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -13,6 +13,8 @@
 
 import Foundation
 import SwiftUI
+import Darwin
+import notify
 import os
 
 // MARK: - Environment model
@@ -32,6 +34,47 @@ struct AppEnvironment: Identifiable, Codable, Equatable {
     self.createdAt       = Date()
     self.lastSyncedAt    = nil
     self.lastSyncStatus  = .never
+  }
+
+  // MARK: - JSON coding
+  //
+  // JSONEncoder's default Date strategy (.deferredToDate) writes a raw Double —
+  // timeIntervalSinceReferenceDate, the 2001 epoch — with nothing in the value
+  // itself to say so. Every install's v2.environments already has data in that
+  // format, so switching the encoder to Apple's actual recommendation, .iso8601,
+  // needs a decoder that still understands the old shape too, or every existing
+  // environment's createdAt/lastSyncedAt breaks on first read after upgrading.
+  // These are shared by every encode/decode of [AppEnvironment] — EnvironmentStore
+  // (list persistence, headless status merge, external-run diffing) and
+  // DiagnosticsExporter. A decode-then-encode cycle (which save() does on every
+  // change) transparently rewrites old data to the new format — no explicit
+  // migration step needed.
+  nonisolated(unsafe) private static let isoFmt: ISO8601DateFormatter = ISO8601DateFormatter()
+
+  static var jsonEncoder: JSONEncoder {
+    let e = JSONEncoder()
+    e.dateEncodingStrategy = .iso8601
+    return e
+  }
+
+  static var jsonDecoder: JSONDecoder {
+    let d = JSONDecoder()
+    d.dateDecodingStrategy = .custom { decoder in
+      let container = try decoder.singleValueContainer()
+      if let str = try? container.decode(String.self) {
+        guard let date = isoFmt.date(from: str) else {
+          throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO8601 date: \(str)")
+        }
+        return date
+      }
+      // Old format: a bare Double is timeIntervalSinceReferenceDate — .deferredToDate's
+      // encoding, what every pre-existing v2.environments entry was written with.
+      if let seconds = try? container.decode(Double.self) {
+        return Date(timeIntervalSinceReferenceDate: seconds)
+      }
+      throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unrecognized date format")
+    }
+    return d
   }
 }
 
@@ -147,6 +190,13 @@ final class EnvironmentStore: ObservableObject {
   @Published private(set) var persistenceLoadFailed: Bool = false
   @Published private(set) var persistenceLoadFailureMessage: String? = nil
 
+  /// A `--silent` run that failed before it even started (no environments
+  /// configured, or `--env` matched none) — see HeadlessStartupFailure. Consumed
+  /// once from UserDefaults in init() (GUI only), so it surfaces exactly once,
+  /// on whichever launch happens to notice it, then is gone.
+  @Published private(set) var headlessStartupFailure: (message: String, date: Date)?
+  func dismissHeadlessStartupFailure() { headlessStartupFailure = nil }
+
   // MARK: - Sync Queue
   //
   // All syncs — whether triggered manually (Run Sync button) or via multi-sync —
@@ -186,15 +236,46 @@ final class EnvironmentStore: ObservableObject {
   }
 
   private let ud = UserDefaults.standard
-  private let listKey   = "v2.environments"
+  nonisolated private static let listKey = "v2.environments"
+  private let listKey   = EnvironmentStore.listKey
   private let activeKey = "v2.activeEnvironmentId"
+
+  /// Non-nil for a `--silent` run (HeadlessMode.swift). That process shares this
+  /// UserDefaults domain with the GUI, so it must not write anything the GUI owns:
+  /// the active-environment pointer and the environment list. It persists only
+  /// terminal sync statuses, merged into the on-disk list (see updateSyncStatus).
+  private let headless: HeadlessOptions?
+
+  /// Environments whose run was declined because another process held their lock.
+  private(set) var skippedForExternalSync: Set<UUID> = []
+
+  /// Environments another process currently holds the sync lock for — GUI-display
+  /// only (Sync/Setup gating, sidebar badge). Never consulted for the actual
+  /// enforcement, which stays SyncEngine.run()'s own SyncLock.tryAcquire.
+  @Published private(set) var externallyLockedEnvironments: Set<UUID> = []
+
+  private var externalRunToken: Int32 = 0
+  private var externalRunStartToken: Int32 = 0
+
+  /// True when a v2 environment list exists — lets a headless run refuse to start
+  /// instead of triggering the first-launch v1 migration from init().
+  nonisolated static var hasPersistedEnvironments: Bool {
+    guard let data = UserDefaults.standard.data(forKey: listKey),
+          let list = try? AppEnvironment.jsonDecoder.decode([AppEnvironment].self, from: data) else { return false }
+    return !list.isEmpty
+  }
 
   var activeEnvironment: AppEnvironment? {
     guard let id = activeEnvironmentId else { return environments.first }
     return environments.first { $0.id == id }
   }
 
-  init() {
+  init(headless: HeadlessOptions? = nil) {
+    self.headless = headless
+    if headless == nil {
+      observeExternalRuns()
+      headlessStartupFailure = HeadlessStartupFailure.consume()
+    }
     NotificationCenter.default.addObserver(
       forName: .persistenceLoadFailed, object: nil, queue: .main) { [weak self] note in
         let msg = note.object as? String
@@ -315,13 +396,16 @@ final class EnvironmentStore: ObservableObject {
     activeStore      = AppStore(environment: env, persistence: persistence, prefs: prefs)
 
     // S2: when a Jamf URL/clientId change invalidates the cached serial→Jamf-ID
-    // mapping, immediately queue a full Jamf re-fetch for this environment so the
-    // user never has to remember to trigger "force refresh". forceFullJamfRefetch
-    // is a one-shot consumed by SyncEngine.run(); enqueue() dedups by env id.
-    activeStore.onJamfRebindingDetected = { [weak self, weak store = activeStore] in
-      guard let self, let store, let envId = store.environmentId else { return }
+    // mapping, flag the next sync for a full Jamf re-fetch — forceFullJamfRefetch
+    // is a one-shot consumed by SyncEngine.run(). Deliberately does NOT enqueue a
+    // sync itself: saving new Jamf credentials in Setup used to silently kick off
+    // a background sync the moment you clicked Save, with no explicit action from
+    // the user — surprising, and indistinguishable in the UI from an unrelated
+    // auto-trigger. The re-fetch now happens on whatever the user does next —
+    // Test Auth, Run Sync, or a schedule/CLI run — not on its own.
+    activeStore.onJamfRebindingDetected = { [weak store = activeStore] in
+      guard let store else { return }
       store.prefs.forceFullJamfRefetch = true
-      self.enqueue(envId)
     }
 
     // If an engine is already running for this environment — whether it is the
@@ -336,6 +420,11 @@ final class EnvironmentStore: ObservableObject {
       let engine = SyncEngine()
       engine.log           = logService
       engine.environmentId = env.id
+      // writeBackEnabled defaults to true (SyncEngine's own default) — a --silent
+      // run used to have its own read-only-unless---write mode here; removed so
+      // --silent always matches what Run Sync does in the app.
+      let skippedId = env.id
+      engine.onSkippedExternalLock = { [weak self] in self?.skippedForExternalSync.insert(skippedId) }
       // Restore this environment's own Last Run Summary now that both
       // environmentId and its namespaced `prefs` exist — see SyncEngine's
       // restoreLastRun(from:) doc comment for why this can't happen in init().
@@ -399,12 +488,14 @@ final class EnvironmentStore: ObservableObject {
     case lastEnvironment
     case running
     case queued
+    case lockedExternally
 
     var userMessage: String {
       switch self {
-      case .lastEnvironment: return "The app needs at least one environment."
-      case .running:         return "Can't delete — sync in progress."
-      case .queued:          return "Can't delete — queued for scheduled sync."
+      case .lastEnvironment:  return "The app needs at least one environment."
+      case .running:          return "Can't delete — sync in progress."
+      case .queued:           return "Can't delete — queued for scheduled sync."
+      case .lockedExternally: return "Can't delete — a command-line sync is running for this environment."
       }
     }
   }
@@ -435,9 +526,10 @@ final class EnvironmentStore: ObservableObject {
   func isQueued(_ id: UUID) -> Bool { syncQueue.contains(id) }
 
   func deletionBlockReason(_ id: UUID) -> DeletionBlockReason? {
-    if environments.count <= 1 { return .lastEnvironment }
-    if isRunning(id)           { return .running }
-    if isQueued(id)            { return .queued }
+    if environments.count <= 1               { return .lastEnvironment }
+    if isRunning(id)                          { return .running }
+    if isQueued(id)                           { return .queued }
+    if externallyLockedEnvironments.contains(id) { return .lockedExternally }
     return nil
   }
 
@@ -462,6 +554,13 @@ final class EnvironmentStore: ObservableObject {
     // last evaluated canDelete (a scheduled run could have enqueued it).
     if let reason = deletionBlockReason(id) {
       throw EnvironmentDeletionError.blocked(reason)
+    }
+    // deletionBlockReason's externallyLockedEnvironments is a cache, refreshed on
+    // activation/notification — not guaranteed current to the instant. A fresh,
+    // uncached lock check right before the destructive file removal below is
+    // cheap and closes that gap for the one check that actually matters.
+    if SyncLock.isHeldElsewhere(id) {
+      throw EnvironmentDeletionError.blocked(.lockedExternally)
     }
     guard environments.contains(where: { $0.id == id }) else { return }
 
@@ -517,7 +616,7 @@ final class EnvironmentStore: ObservableObject {
     // only replaces the @Published pointers; it does not touch the running engine.
     // Do NOT call activeSyncEngine.stop() here — that would cancel a live sync.
     activeEnvironmentId = id
-    ud.set(id.uuidString, forKey: activeKey)
+    if headless == nil { ud.set(id.uuidString, forKey: activeKey) }
     if let env = activeEnvironment {
       buildServices(for: env)
     }
@@ -646,13 +745,95 @@ final class EnvironmentStore: ObservableObject {
     guard let idx = environments.firstIndex(where: { $0.id == id }) else { return }
     environments[idx].lastSyncStatus = status
     if let d = date { environments[idx].lastSyncedAt = d }
-    save()
+    if headless != nil {
+      persistHeadlessStatus(id, status: status, date: date)
+    } else {
+      save()
+    }
+  }
+
+  /// Read-modify-write of one environment's status on the on-disk list, so a
+  /// headless run can never clobber an environment the GUI added or renamed. Only
+  /// terminal statuses are written: a killed run must not leave the GUI showing
+  /// "running" forever, and the cross-process lock is what signals "in progress".
+  private func persistHeadlessStatus(_ id: UUID, status: EnvironmentSyncStatus, date: Date?) {
+    guard status != .running,
+          let data = ud.data(forKey: listKey),
+          var list = try? AppEnvironment.jsonDecoder.decode([AppEnvironment].self, from: data),
+          let idx = list.firstIndex(where: { $0.id == id }) else { return }
+    list[idx].lastSyncStatus = status
+    if let date { list[idx].lastSyncedAt = date }
+    if let out = try? AppEnvironment.jsonEncoder.encode(list) { ud.set(out, forKey: listKey) }
+  }
+
+  // MARK: - External (headless) runs
+
+  /// The GUI learns about a finished `--silent` run two ways: a Darwin notification
+  /// posted by that process, and app activation as a fallback in case the
+  /// notification is dropped. Both funnel into refreshFromExternalRun().
+  private func observeExternalRuns() {
+    notify_register_dispatch(HeadlessNotification.runFinished, &externalRunToken, .main) { [weak self] _ in
+      Task { @MainActor in self?.refreshFromExternalRun() }
+    }
+    // Same fallback shape as runFinished above, but for the START of a headless
+    // run — lets a locked-environment badge appear immediately rather than only
+    // once that run finishes. refreshExternalLocks() also runs unconditionally
+    // below at every activation, which is what catches a run already in progress
+    // *before* the GUI was even open to receive this notification.
+    notify_register_dispatch(HeadlessNotification.runStarted, &externalRunStartToken, .main) { [weak self] _ in
+      Task { @MainActor in self?.refreshExternalLocks() }
+    }
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+        Task { @MainActor in
+          self?.refreshFromExternalRun()
+          self?.refreshExternalLocks()
+        }
+      }
+    refreshExternalLocks()
+  }
+
+  /// Best-effort peek of every environment's lock (see SyncLock.isHeldElsewhere) —
+  /// GUI display only. Skips whatever this process is itself running so a live
+  /// in-process sync is never mistaken for an externally-locked one.
+  func refreshExternalLocks() {
+    guard headless == nil else { return }
+    var locked: Set<UUID> = []
+    for env in environments where !isRunning(env.id) {
+      if SyncLock.isHeldElsewhere(env.id) { locked.insert(env.id) }
+    }
+    if locked != externallyLockedEnvironments { externallyLockedEnvironments = locked }
+  }
+
+  /// Compares the on-disk environment list with memory. For an environment whose
+  /// last-run status or time changed underneath us (and isn't running here), adopts
+  /// the on-disk values; if that includes the active environment, reloads its
+  /// last-run summary and devices. A no-op when nothing changed, so the fallback on
+  /// every app activation stays cheap.
+  private func refreshFromExternalRun() {
+    guard headless == nil,
+          let data = ud.data(forKey: listKey),
+          let onDisk = try? AppEnvironment.jsonDecoder.decode([AppEnvironment].self, from: data) else { return }
+    var changed: Set<UUID> = []
+    for disk in onDisk {
+      guard let idx = environments.firstIndex(where: { $0.id == disk.id }), !isRunning(disk.id) else { continue }
+      if environments[idx].lastSyncedAt != disk.lastSyncedAt || environments[idx].lastSyncStatus != disk.lastSyncStatus {
+        environments[idx].lastSyncedAt   = disk.lastSyncedAt
+        environments[idx].lastSyncStatus = disk.lastSyncStatus
+        changed.insert(disk.id)
+      }
+    }
+    guard let active = activeEnvironmentId, changed.contains(active) else { return }
+    activeSyncEngine.restoreLastRun(from: activeStore.prefs)
+    activeStore.prefs.objectWillChange.send()
+    Task { await activeStore.loadDevicesFromCoreDataSync() }
   }
 
   // MARK: - Persistence
 
   private func save() {
-    if let data = try? JSONEncoder().encode(environments) {
+    guard headless == nil else { return }
+    if let data = try? AppEnvironment.jsonEncoder.encode(environments) {
       ud.set(data, forKey: listKey)
     }
     if let id = activeEnvironmentId {
@@ -662,7 +843,7 @@ final class EnvironmentStore: ObservableObject {
 
   private func load() {
     if let data = ud.data(forKey: listKey),
-       let list = try? JSONDecoder().decode([AppEnvironment].self, from: data) {
+       let list = try? AppEnvironment.jsonDecoder.decode([AppEnvironment].self, from: data) {
       environments = list
     }
     if let str = ud.string(forKey: activeKey),
@@ -776,6 +957,7 @@ final class EnvironmentStore: ObservableObject {
     try PersistenceController.wipeEnvironment(id: id)   // fatal on failure
     LogService.wipeEnvironmentLog(id: id)
     LogService.evictEnvironment(id: id)
+    SyncLock.remove(id)
     os_log(.default, "[EnvironmentStore] Wiped all data for environment %{public}@", id.uuidString)
   }
 }

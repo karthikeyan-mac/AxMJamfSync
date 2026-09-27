@@ -1,9 +1,9 @@
 // LogService.swift
 // @MainActor log sink — entries shown in Sync UI log window + written to disk.
-//   shared singleton  → ~/Library/Logs/AxMJamfSync/sync.log            (app-wide diagnostics only)
-//   per-environment   → ~/Library/Logs/AxMJamfSync/environments/{uuid}.log
+//   shared singleton  → ~/Library/Containers/com.karthikmac.axmjamfsync/Data/Library/Logs/AxMJamfSync/sync.log            (app-wide diagnostics only)
+//   per-environment   → ~/Library/Containers/com.karthikmac.axmjamfsync/Data/Library/Logs/AxMJamfSync/environments/{uuid}.log
 //
-// Levels: info/warn/error → append to UI entries list + write to file with [INFO ]/[WARN ]/[ERROR] prefix.
+// Levels: info/warn/error → append to UI entries list + write to file with [INFO ]/[WARN ]/[ERROR] prefix, then [GUI]/[CLI].
 //         debug → file-only (never shown in UI). Consecutive duplicate debug lines within 2s
 //         are collapsed to "(×N total) <message>" to prevent log spam from concurrent tasks.
 //
@@ -43,6 +43,9 @@ struct LogEntry: Identifiable {
     }()
     // ISO8601DateFormatter is not Sendable-audited — nonisolated(unsafe), read-only.
     nonisolated(unsafe) private static let isoFmt = ISO8601DateFormatter()
+    // The GUI and a `--silent` run append to the same per-environment file, so each
+    // file line says which process wrote it. Fixed for the life of the process.
+    private static let source = CommandLine.arguments.contains("--silent") ? "CLI" : "GUI"
 
     let id         = UUID()
     let timestamp:  Date
@@ -62,7 +65,7 @@ struct LogEntry: Identifiable {
         let icon       = level.icon
         let raw        = level.rawValue.padded(to: 5)
         fullLine       = "\(timeString) \(icon) \(raw) \(message)"
-        fileLine       = "[\(LogEntry.isoFmt.string(from: ts))] [\(raw)] \(message)"
+        fileLine       = "[\(LogEntry.isoFmt.string(from: ts))] [\(raw)] [\(LogEntry.source)] \(message)"
     }
 }
 
@@ -121,6 +124,10 @@ final class LogService: ObservableObject {
     func info(_ msg: String)  { append(.init(level: .info,  message: msg)) }
     func warn(_ msg: String)  { append(.init(level: .warn,  message: msg)); warnCount += 1 }
     func error(_ msg: String) { append(.init(level: .error, message: msg)) }
+
+    /// Blocks until every line queued so far is on disk. For a process that exits
+    /// straight after logging (a `--silent` run that refuses to start).
+    func flush() { ioQueue.sync {} }
 
     /// debug() — file only. Never shown in the Sync UI log window.
     /// Consecutive identical messages within 2s are collapsed to avoid log spam
@@ -230,8 +237,11 @@ final class LogService: ObservableObject {
             try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: logURL.path)
         }
         try? fileHandle?.close()
-        fileHandle = try? FileHandle(forWritingTo: logURL)
-        _ = try? fileHandle?.seekToEnd()
+        // O_APPEND, not open-then-seekToEnd: a headless run appends to the same
+        // per-environment file while the GUI holds a handle, and a plain handle would
+        // resume at its stale offset and overwrite the other process's lines.
+        let fd = open(logURL.path, O_WRONLY | O_APPEND, 0o600)
+        fileHandle = fd >= 0 ? FileHandle(fileDescriptor: fd, closeOnDealloc: true) : nil
     }
 
     private nonisolated func writeLocked(_ data: Data) {

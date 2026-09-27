@@ -15,12 +15,14 @@ import SwiftUI
 import CoreData
 import AppKit
 
-@main
+// Entry point is AppLauncher (HeadlessMode.swift), which starts this App for a normal
+// launch and runs the no-UI sync path for `--silent`.
 struct AxMJamfSyncApp: App {
 
   @StateObject private var envStore  = EnvironmentStore()
   @StateObject private var scheduler = SyncScheduler()
   @StateObject private var runMode   = AppRunModeController()
+  @StateObject private var updates   = UpdateChecker()
   @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
   private var logDirURL: URL {
@@ -94,6 +96,10 @@ struct AxMJamfSyncApp: App {
             .credits:         credits
           ])
         }
+        Button("Check for Updates…") {
+          Task { await updates.check(userInitiated: true) }
+        }
+        .disabled(updates.state == .checking)
       }
       SidebarCommands()
       CommandGroup(replacing: .help) {
@@ -116,6 +122,7 @@ struct AxMJamfSyncApp: App {
       MenuBarContentView()
         .environmentObject(envStore)
         .environmentObject(scheduler)
+        .environmentObject(updates)
     } label: {
       Image(nsImage: Self.menuBarIcon)
     }
@@ -125,6 +132,7 @@ struct AxMJamfSyncApp: App {
       SettingsView()
         .environmentObject(scheduler)
         .environmentObject(runMode)
+        .environmentObject(updates)
     }
     .windowResizability(.contentMinSize)
   }
@@ -135,6 +143,7 @@ struct AxMJamfSyncApp: App {
 private struct MenuBarContentView: View {
   @EnvironmentObject private var envStore:  EnvironmentStore
   @EnvironmentObject private var scheduler: SyncScheduler
+  @EnvironmentObject private var updates:   UpdateChecker
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
@@ -153,6 +162,15 @@ private struct MenuBarContentView: View {
       Label("Sync All Now", systemImage: "arrow.triangle.2.circlepath")
     }
     .disabled(envStore.isSyncQueueRunning || envStore.environments.isEmpty)
+
+    if let update = updates.pendingUpdate {
+      Divider()
+      Button {
+        NSWorkspace.shared.open(update.url)
+      } label: {
+        Label("Update Available: v\(update.version)", systemImage: "arrow.down.circle")
+      }
+    }
 
     if scheduler.isEnabled {
       Divider()

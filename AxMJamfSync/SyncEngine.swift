@@ -67,6 +67,12 @@ final class SyncEngine: ObservableObject {
     var environmentId: UUID? = nil
     // Called at sync start/end so EnvironmentStore can update sidebar status.
     var onSyncStatusChange: ((EnvironmentSyncStatus, Date?) -> Void)?
+    // Called when run() declined to start because another process holds this
+    // environment's cross-process lock (GUI vs `--silent`).
+    var onSkippedExternalLock: (() -> Void)?
+    // false for a `--silent` run without `--write`: Step 4 is skipped and every
+    // pending device stays .pending for a later run.
+    var writeBackEnabled: Bool = true
     private var syncTask:  Task<Void, Never>?
     private var activeABM:  ABMService?  = nil
     private var activeJamf: JamfService? = nil
@@ -142,6 +148,20 @@ final class SyncEngine: ObservableObject {
 
     func run(store: AppStore) {
         guard !isRunning else { return }
+        // Cross-process mutex: the GUI and a `--silent` run must never sync the same
+        // environment at once. Taken before the one-shot flags are consumed so a
+        // skipped run doesn't swallow them. Released when _run returns.
+        var acquiredLock: SyncLock?
+        if let envId = store.environmentId {
+            guard let lock = SyncLock.tryAcquire(envId) else {
+                stepLabel = "Skipped — another AxM Jamf Sync process is already syncing this environment."
+                log.warn("Sync skipped — another AxM Jamf Sync process (the app or a --silent run) is already syncing this environment.")
+                onSkippedExternalLock?()
+                return
+            }
+            acquiredLock = lock
+        }
+        let heldLock = acquiredLock
         // Snapshot the one-shot flags BEFORE clearing them so _run can honour them
         let forceDevices  = store.prefs.alwaysRefreshDevices
         let forceCoverage = store.prefs.alwaysRefreshCoverage
@@ -154,14 +174,19 @@ final class SyncEngine: ObservableObject {
         store.prefs.forceFullJamfRefetch  = false
         // Only request notification authorisation when status is undetermined —
         // re-requesting after grant/deny is a no-op but avoids an unnecessary system call.
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            if settings.authorizationStatus == .notDetermined {
-                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        if !SyncNotificationService.isSuppressed {
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                if settings.authorizationStatus == .notDetermined {
+                    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+                }
             }
         }
         tabBadge = "●"
-        NSApp.dockTile.badgeLabel = "1/4"
-        syncTask = Task { await _run(store: store, forceDevices: forceDevices, forceCoverage: forceCoverage, forceJamf: forceJamf) }
+        if !SyncNotificationService.isSuppressed { NSApp.dockTile.badgeLabel = "1/4" }
+        syncTask = Task {
+            await _run(store: store, forceDevices: forceDevices, forceCoverage: forceCoverage, forceJamf: forceJamf)
+            heldLock?.release()
+        }
     }
 
     func stop() {
@@ -170,7 +195,7 @@ final class SyncEngine: ObservableObject {
         syncTask  = nil
         stepLabel = "Stopping…"
         tabBadge  = ""
-        NSApp.dockTile.badgeLabel = nil
+        if !SyncNotificationService.isSuppressed { NSApp.dockTile.badgeLabel = nil }
         // Token cleanup happens in _run's finally block after CancellationError is caught
     }
 
@@ -185,7 +210,7 @@ final class SyncEngine: ObservableObject {
         task.cancel()
         stepLabel = "Stopping…"
         tabBadge  = ""
-        NSApp.dockTile.badgeLabel = nil
+        if !SyncNotificationService.isSuppressed { NSApp.dockTile.badgeLabel = nil }
         let timedOut = await withTaskGroup(of: Bool.self) { group in
             group.addTask { await task.value; return false }
             group.addTask { try? await Task.sleep(for: timeout); return true }
@@ -214,7 +239,7 @@ final class SyncEngine: ObservableObject {
             phase = .error
             lastError = "Internal error: \(reason)."
             tabBadge = ""
-            NSApp.dockTile.badgeLabel = nil
+            if !SyncNotificationService.isSuppressed { NSApp.dockTile.badgeLabel = nil }
             lastOutcome = .failed
             hasUnviewedIssue = true
             onSyncStatusChange?(.error, Date())
@@ -265,6 +290,10 @@ final class SyncEngine: ObservableObject {
         let jamfCreds = store.jamfCredentials
         log.debug("────────────────────────────────────────────────────────")
         log.debug("RUN STARTED  \(df.string(from: runStart))")
+        // Log files are UUID-stemmed, not name-stemmed (S9 — names are mutable and
+        // can collide, UUIDs can't), so this is the one place a specific log file
+        // says which named environment it's for.
+        log.debug("ENVIRONMENT  \(store.environmentName)  (\(store.environmentId?.uuidString ?? "default"))")
         log.debug("────────────────────────────────────────────────────────")
         log.debug("APP VERSION  \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))")
         log.debug("── Scope & Credentials ─────────────────────────────────")
@@ -819,7 +848,7 @@ final class SyncEngine: ObservableObject {
                 // 4.5: no attention-request here — a mid-run step transition isn't
                 // something the user needs to be pulled back to the app for; the
                 // Dock badge alone is enough progress signal.
-                NSApp.dockTile.badgeLabel = "3/4"
+                if !SyncNotificationService.isSuppressed { NSApp.dockTile.badgeLabel = "3/4" }
 
                 // forceCoverage = ON  → ALL eligible devices are re-fetched and re-patched,
                 //                      ignoring cache timestamps entirely. This is a full
@@ -1070,7 +1099,7 @@ final class SyncEngine: ObservableObject {
 
             // ── Step 4: Jamf Write-back ──────────────────────────────────
             phase = .jamfUpdate; stepStartTime = Date(); stepElapsed = ""
-                NSApp.dockTile.badgeLabel = "4/4"
+                if !SyncNotificationService.isSuppressed { NSApp.dockTile.badgeLabel = "4/4" }
             // Exclude AxM-only devices from Jamf Update — they have no jamfId.
             // When a full device sync later classifies them as .both, wbStatus resets to .pending.
             // Only write back devices that have real coverage data.
@@ -1097,7 +1126,25 @@ final class SyncEngine: ObservableObject {
             // coverageLimit is an Apple API rate-limit only — it must NOT cap Step 4.
             // Any device that already has coverage data in CoreData but hasn't been
             // written to Jamf yet must be patched regardless of the coverage fetch limit.
-            let wbTargets = allPending
+            //
+            // Also gated on jamfAuthPassed (Step 2's check, still in scope) — not just
+            // writeBackEnabled. Without this, an environment with Jamf never configured
+            // (or currently failing auth) but *some* cached coverage data from an earlier
+            // configured state would reach jamfService.validToken() below with an empty
+            // URL, throw "unsupported URL", and fail the entire run — devices that were
+            // never going anywhere anyway shouldn't be able to sink an otherwise-clean
+            // AxM-only sync. Mirrors Step 2's own skip wording; devices simply stay
+            // .pending, same as the writeBackEnabled == false case right below.
+            let wbTargets = (writeBackEnabled && jamfAuthPassed) ? allPending : []
+            if writeBackEnabled && !jamfAuthPassed && !allPending.isEmpty {
+                log.warn("Step 4/4 — Jamf not configured or not authenticated — \(allPending.count) device(s) with coverage data stay pending.")
+            }
+            // writeBackEnabled is always true today (GUI and --silent both write back —
+            // see EnvironmentStore.buildServices) — kept as a real, working false path
+            // rather than deleted, in case a read-only mode is ever wanted again.
+            if !writeBackEnabled {
+                log.info("Jamf write-back is off for this run — \(allPending.count) device(s) stay pending.")
+            }
 
             // ── Coverage → Jamf breakdown ────────────────────────────────────
             // Help the user understand why the write-back count differs from the
@@ -1125,7 +1172,7 @@ final class SyncEngine: ObservableObject {
             var wbSynced = 0, wbFailed = 0, wbSkipped = 0
 
             if wbTargets.isEmpty {
-                log.info("Jamf Update: nothing pending.")
+                log.info(writeBackEnabled ? "Jamf Update: nothing pending." : "Jamf Update: skipped (read-only run).")
             } else {
                 totalSteps  = wbTargets.count
                 currentStep = 0
@@ -1455,7 +1502,7 @@ final class SyncEngine: ObservableObject {
             case .cancelled:
                 break
             }
-            NSApp.dockTile.badgeLabel = nil
+            if !SyncNotificationService.isSuppressed { NSApp.dockTile.badgeLabel = nil }
 
             stepLabel = outcome == .success
                 ? "Sync complete — \(store.devices.count) devices | " +
@@ -1641,7 +1688,7 @@ final class SyncEngine: ObservableObject {
         // Keychain token is left intact so the next ABMService init can load and reuse it.
         store.suppressAutoReload = false
         tabBadge = ""
-        NSApp.dockTile.badgeLabel = nil
+        if !SyncNotificationService.isSuppressed { NSApp.dockTile.badgeLabel = nil }
         await activeJamf?.invalidateToken()
         // nil the actors — releases their in-memory token cache but preserves Keychain entries
         activeABM  = nil

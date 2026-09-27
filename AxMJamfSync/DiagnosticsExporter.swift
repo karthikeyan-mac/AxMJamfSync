@@ -193,7 +193,7 @@ enum DiagnosticsExporter {
     try appText.write(to: stagingDir.appendingPathComponent("app.txt"), atomically: true, encoding: .utf8)
 
     // environments.json — AppEnvironment carries no credentials or hosts, safe as-is.
-    if let data = try? JSONEncoder().encode(environments) {
+    if let data = try? AppEnvironment.jsonEncoder.encode(environments) {
       try data.write(to: stagingDir.appendingPathComponent("environments.json"))
     }
 

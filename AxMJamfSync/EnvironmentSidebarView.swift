@@ -43,7 +43,18 @@ struct EnvironmentSidebarView: View {
     )
   }
 
+  /// Single gate for all three rename entry points (double-click, Return key,
+  /// context menu) — renaming while a sync is running (in this process or a
+  /// `--silent` one) would show the OLD name in that run's own log header for
+  /// its whole duration (AppStore.environmentName is captured once, not
+  /// re-read), while the sidebar switches to the new name immediately —
+  /// confusing, and no reason to allow it mid-run rather than after.
+  private func canRename(_ env: AppEnvironment) -> Bool {
+    !envStore.isRunning(env.id) && !envStore.externallyLockedEnvironments.contains(env.id)
+  }
+
   private func startRename(_ env: AppEnvironment) {
+    guard canRename(env) else { return }
     renamingId = env.id
     renameText = env.name
     renameFieldFocused = true
@@ -116,6 +127,7 @@ struct EnvironmentSidebarView: View {
           env:         env,
           isActive:    env.id == envStore.activeEnvironmentId,
           isRunning:   syncEngine.isRunning && env.id == envStore.activeEnvironmentId,
+          isLockedExternally: envStore.externallyLockedEnvironments.contains(env.id),
           isQueued:    envStore.syncQueue.dropFirst().contains(env.id),
           blockReason: envStore.deletionBlockReason(env.id),
           showScopeTag: scopesAreMixed,
@@ -190,6 +202,10 @@ struct EnvironmentRow: View {
   let env:         AppEnvironment
   let isActive:    Bool
   let isRunning:   Bool
+  /// Another process (a `--silent` run) currently holds this environment's sync
+  /// lock — see EnvironmentStore.refreshExternalLocks(). Distinct from `isRunning`,
+  /// which only reflects a sync running in this GUI process.
+  let isLockedExternally: Bool
   let isQueued:    Bool
   /// nil when the environment can be deleted; otherwise why it can't.
   let blockReason: EnvironmentStore.DeletionBlockReason?
@@ -208,12 +224,17 @@ struct EnvironmentRow: View {
 
   @State private var isHovering = false
 
+  /// Same rule as EnvironmentSidebarView.canRename(_:) — kept in sync manually
+  /// since this row doesn't have the environment's live running/lock state any
+  /// other way than the isRunning/isLockedExternally it's already handed.
+  private var canRename: Bool { !isRunning && !isLockedExternally }
+
   /// Deletable now.
   private var canDelete: Bool { blockReason == nil }
   /// Offer the control (disabled, with a reason) for a transient block; hide it
   /// entirely only for the permanent "last environment" case.
   private var showDeleteControl: Bool {
-    blockReason == nil || blockReason == .running || blockReason == .queued
+    blockReason == nil || blockReason == .running || blockReason == .queued || blockReason == .lockedExternally
   }
 
   var body: some View {
@@ -223,6 +244,11 @@ struct EnvironmentRow: View {
         ProgressView()
           .fixedSize()
           .scaleEffect(0.55)
+          .frame(width: 12, height: 12)
+      } else if isLockedExternally {
+        Image(systemName: "terminal.fill")
+          .font(.system(size: 9))
+          .foregroundStyle(.secondary)
           .frame(width: 12, height: 12)
       } else if isQueued {
         Image(systemName: "clock")
@@ -251,18 +277,29 @@ struct EnvironmentRow: View {
             .fontWeight(isActive ? .semibold : .regular)
             .foregroundStyle(isActive ? .primary : .secondary)
             .lineLimit(1)
+            // Double-click is a no-op while locked — onStartRename() routes through
+            // the parent's startRename(_:), which re-checks canRename itself. No
+            // visual affordance either way for a double-click, unlike the context
+            // menu item below, so there's nothing to disable here.
             .onTapGesture(count: 2) { onStartRename() }
         }
         // 7.2: sync recency — an MSP scanning many tenants wants "when did
         // this last run", not a scope label duplicating the sidebar footer.
         HStack(spacing: 3) {
-          Image(systemName: env.lastSyncStatus.icon)
-            .font(.system(size: 8))
-            .foregroundStyle(env.lastSyncStatus.color)
-          if let date = env.lastSyncedAt {
-            Text("Synced ") + Text(date, style: .relative)
+          if isLockedExternally {
+            Image(systemName: "terminal.fill")
+              .font(.system(size: 8))
+              .foregroundStyle(.secondary)
+            Text("Syncing (command-line)")
           } else {
-            Text("Never synced")
+            Image(systemName: env.lastSyncStatus.icon)
+              .font(.system(size: 8))
+              .foregroundStyle(env.lastSyncStatus.color)
+            if let date = env.lastSyncedAt {
+              Text("Synced ") + Text(date, style: .relative)
+            } else {
+              Text("Never synced")
+            }
           }
         }
         .font(.caption2)
@@ -301,8 +338,21 @@ struct EnvironmentRow: View {
     .padding(.vertical, 2)
     .contentShape(Rectangle())
     .onHover { isHovering = $0 }
+    // The environment ID is what a log filename, --env, and Full Disk Access
+    // debugging all key off — a system tooltip alone isn't selectable text, so
+    // it's also on the context menu below for an actual copy.
+    .help("Environment ID: \(env.id.uuidString)")
     .contextMenu {
       Button("Rename…") { onStartRename() }
+        .disabled(!canRename)
+      if !canRename {
+        Text(isLockedExternally ? "A command-line sync is running for this environment"
+                                 : "Sync in progress")
+      }
+      Button("Copy Environment ID") {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(env.id.uuidString, forType: .string)
+      }
       Divider()
       Button("Delete…", role: .destructive) { onDelete() }
         .disabled(!canDelete)

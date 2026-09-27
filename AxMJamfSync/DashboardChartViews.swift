@@ -121,6 +121,25 @@ struct YearTrendChart: View {
             .foregroundStyle(color.gradient)
           }
           .frame(height: 160)
+          // Explicit axis labels on BOTH axes, no customisation beyond the default
+          // position. Charts' own automatic label-placement — on the numeric Y
+          // axis as much as the string X axis, and this is the one that was
+          // actually still firing after an X-only override — can pick a
+          // non-standard UnitPoint anchor near a plot edge to dodge clipping,
+          // which its renderer doesn't support and logs a warning for (harmless —
+          // it still renders correctly). Taking over rendering here, even with
+          // nothing actually customised, is what stops Charts computing that
+          // anchor itself.
+          .chartXAxis {
+            AxisMarks { _ in
+              AxisValueLabel()
+            }
+          }
+          .chartYAxis {
+            AxisMarks { _ in
+              AxisValueLabel()
+            }
+          }
         }
         if unknownCount > 0 {
           if let onTapUnknown {

@@ -186,6 +186,10 @@ enum KeychainService {
         let hasKeyId    = !c.keyId.isEmpty
         let hasPrivKey  = !c.privateKeyContent.isEmpty
         let allPresent  = hasClientId && hasKeyId && hasPrivKey
+        // These are the v1 flat keys. Once v2 environments exist they are gone by design
+        // (per-environment credentials live under loadAxMCredentialsForEnv), so reporting
+        // them as MISSING is noise that reads like a real credential failure.
+        if !EnvironmentStore.hasPersistedEnvironments {
         Task { @MainActor in
             let log = LogService.shared
             log.debug("[Keychain] \(scopeLabel) credentials — " +
@@ -217,6 +221,7 @@ enum KeychainService {
             if !hasJamfURL || !hasJamfClient || !hasJamfSecret {
                 log.warn("[Keychain] Jamf credentials incomplete — Jamf steps will be skipped.")
             }
+        }
         }
 
         return c
