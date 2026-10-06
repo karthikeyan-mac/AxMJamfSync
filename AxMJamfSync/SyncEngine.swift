@@ -375,6 +375,8 @@ final class SyncEngine: ObservableObject {
         var rawABM:    [RawABMDevice]         = []
         var rawJamf:   [RawJamfComputer]      = []
         var rawMobile: [RawJamfMobileDevice]  = []
+        var pruneComputers = false   // set only after a complete, non-empty Jamf fetch
+        var pruneMobile    = false
         // serial → (serverId, serverName, serverType) — built after orgDevices fetch
         var mdmServerLookup: [String: RawMdmServer] = [:]
         // Declared outside do{} so the CancellationError handler can flush whatever
@@ -650,6 +652,7 @@ final class SyncEngine: ObservableObject {
                         let pages = max(1, (rawJamf.count + pageSize - 1) / pageSize)
                         log.info("Jamf: fetched \(rawJamf.count) computers across \(pages) page(s).")
                         runJamfCount += rawJamf.count
+                        pruneComputers = !rawJamf.isEmpty
                     } catch {
                         log.error("Step 2/4 — Jamf computer fetch failed: \(error.localizedDescription). Continuing without computers.")
                         rawJamf = []
@@ -675,6 +678,7 @@ final class SyncEngine: ObservableObject {
                         let mobilePages = max(1, (rawMobile.count + pageSize - 1) / pageSize)
                         log.info("Jamf: fetched \(rawMobile.count) mobile devices across \(mobilePages) page(s).")
                         runJamfCount += rawMobile.count
+                        pruneMobile = !rawMobile.isEmpty
                     } catch {
                         log.warn("Step 2/4 — Jamf mobile fetch failed: \(error.localizedDescription). Continuing without mobile devices.")
                         rawMobile = []
@@ -706,9 +710,17 @@ final class SyncEngine: ObservableObject {
                 let mobileSnapshot = rawMobile
                 let jamfOriginSnap = store.jamfCredentials.canonicalOrigin
                 let mergeResult = await Task.detached(priority: .userInitiated) {
-                    mergeDevicesOffActor(abm: abmSnapshot, jamf: jamfSnapshot, mobile: mobileSnapshot, existing: existingSnap, jamfOrigin: jamfOriginSnap)
+                    mergeDevicesOffActor(abm: abmSnapshot, jamf: jamfSnapshot, mobile: mobileSnapshot, existing: existingSnap, jamfOrigin: jamfOriginSnap,
+                                         pruneComputers: pruneComputers, pruneMobile: pruneMobile)
                 }.value
                 let merged = mergeResult.devices
+                if !mergeResult.removedFromJamf.isEmpty {
+                    log.warn("Merge: \(mergeResult.removedFromJamf.count) device(s) no longer in Jamf — unlinked from Jamf (\(mergeResult.deletedSerials.count) Jamf-only record(s) removed).")
+                    log.debug("[Detail] Removed from Jamf: \(mergeResult.removedFromJamf.joined(separator: ", "))")
+                }
+                if mergeResult.pruneBlocked > 0 {
+                    log.warn("Merge: \(mergeResult.pruneBlocked) device(s) missing from Jamf exceeds the safety limit — left untouched. Re-run Force Refresh Devices to confirm.")
+                }
                 if mergeResult.clearedExternally > 0 {
                     log.warn("\(mergeResult.clearedExternally) device(s) had purchasing data changed or cleared in Jamf (warrantyDate / vendor / poNumber / poDate) — re-queued for write-back.")
                     log.debug("[Detail] Purchasing data mismatch: \(mergeResult.clearedExternally) device(s) found with one or more fields changed in Jamf since last sync.")
@@ -728,6 +740,7 @@ final class SyncEngine: ObservableObject {
 
 
                 stepLabel = "Saving \(merged.count) devices to CoreData…"
+                if !mergeResult.deletedSerials.isEmpty { await store.deleteDevices(serials: mergeResult.deletedSerials) }
                 let mdmLookup = mdmServerLookup
                 let mergeSaveOK = await store.upsertDevices(merged.map { sd in
                     var d = sd.toDevice()
@@ -1283,6 +1296,9 @@ final class SyncEngine: ObservableObject {
                                     if msg.contains("401") || msg.contains("unauthori") || msg.contains("token") {
                                         return .authAbort
                                     }
+                                    if case JamfError.httpError(_, 404) = error {
+                                        return .skipped(device, "Not found in Jamf (HTTP 404) — deleted from Jamf; clears on next Jamf device refresh")
+                                    }
                                     return .failed(device, error.localizedDescription)
                                 }
                             }
@@ -1709,9 +1725,11 @@ private func mergeDevicesOffActor(
         jamf:     [RawJamfComputer],
         mobile:   [RawJamfMobileDevice],
         existing: [Device],
-        jamfOrigin: String   // S2: canonical origin of the Jamf host this fetch ran against —
+        jamfOrigin: String,  // S2: canonical origin of the Jamf host this fetch ran against —
                              // stamped on every device whose serial is (re-)matched here.
-    ) -> (devices: [SyncDevice], clearedExternally: Int) {
+        pruneComputers: Bool = false,   // true only when a COMPLETE computer inventory was fetched this run
+        pruneMobile:    Bool = false    // same, for mobile devices
+    ) -> (devices: [SyncDevice], clearedExternally: Int, removedFromJamf: [String], deletedSerials: [String], pruneBlocked: Int) {
 
         let existingBySerial: [String: Device] = Dictionary(
             existing.map { ($0.serialNumber, $0) },
@@ -1965,6 +1983,7 @@ private func mergeDevicesOffActor(
                 if isNewJamfMatch {
                     // Always queue on first Jamf match regardless of prior status
                     sd.wbStatus = .pending
+                    sd.wbNote = nil   // clears a stale "Removed from Jamf" note if the device was re-added
                 } else if hasCoverageData && coverageChanged {
                     // Coverage data changed — re-queue so updated values get written
                     sd.wbStatus = .pending
@@ -2171,7 +2190,44 @@ private func mergeDevicesOffActor(
             }
         }
 
-        return (Array(result.values).sorted { $0.serialNumber < $1.serialNumber }, clearedExternallyCount)
+        // Serials Jamf no longer returns: the pre-population loop carries every existing
+        // record forward, so without this a device deleted from Jamf keeps its stale jamfId
+        // forever and 404s on every write-back.
+        var removedFromJamf: [String] = []
+        var deletedSerials: [String] = []
+        var pruneBlocked = 0
+        for (isMobileType, prune) in [(false, pruneComputers), (true, pruneMobile)] where prune {
+            let seen = Set(isMobileType ? mobile.map(\.serialNumber) : jamf.map(\.serialNumber))
+            let stale = existing.filter {
+                $0.jamfId != nil && $0.isMobile == isMobileType && !seen.contains($0.serialNumber)
+            }
+            let known = existing.filter { $0.jamfId != nil && $0.isMobile == isMobileType }.count
+            // Safety valve: a truncated-but-successful fetch must never mass-unlink the store.
+            if stale.count > max(50, known / 10) { pruneBlocked += stale.count; continue }
+            for d in stale {
+                guard var sd = result[d.serialNumber] else { continue }
+                if sd.axmDeviceId == nil {
+                    result[d.serialNumber] = nil
+                    deletedSerials.append(d.serialNumber)
+                } else {
+                    sd.deviceSource = .axmOnly
+                    sd.wbStatus = nil; sd.wbPushedAt = nil
+                    sd.wbNote = "Removed from Jamf on \(now.prefix(10)) — no longer returned by Jamf inventory"
+                    sd.jamfId = nil; sd.jamfName = nil; sd.jamfManaged = nil
+                    sd.jamfModel = nil; sd.jamfModelIdentifier = nil; sd.jamfMacAddress = nil
+                    sd.jamfReportDate = nil; sd.jamfLastContact = nil; sd.jamfLastEnrolled = nil
+                    sd.jamfMdmCertExpiration = nil; sd.jamfInitialEntryDate = nil
+                    sd.jamfProcessorType = nil; sd.jamfRamGB = nil
+                    sd.jamfWarrantyDate = nil; sd.jamfVendor = nil; sd.jamfAppleCareId = nil
+                    sd.jamfOsVersion = nil; sd.jamfFileVaultStatus = nil; sd.jamfUsername = nil
+                    sd.jamfValidationStatus = nil; sd.lastValidatedJamfOrigin = nil
+                    result[d.serialNumber] = sd
+                }
+                removedFromJamf.append(d.serialNumber)
+            }
+        }
+
+        return (Array(result.values).sorted { $0.serialNumber < $1.serialNumber }, clearedExternallyCount, removedFromJamf, deletedSerials, pruneBlocked)
     }
 
 // MARK: - SyncError

@@ -872,6 +872,12 @@ struct DeviceDetailPanel: View {
                         }
                     }
 
+                    if device.deviceSource == .axmOnly, let note = device.wbNote, !note.isEmpty {
+                        DetailSection(title: "Jamf", icon: "exclamationmark.triangle.fill") {
+                            DetailAttrRow(label: "Note", value: note)
+                        }
+                    }
+
                     Spacer(minLength: 20)
                 }
                 .padding(.top, 12)

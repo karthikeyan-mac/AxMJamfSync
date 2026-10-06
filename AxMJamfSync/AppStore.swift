@@ -656,6 +656,22 @@ final class AppStore: ObservableObject {
         loadDevicesFromCoreData()
     }
 
+    /// Removes records by serial (Jamf-only devices that no longer exist in Jamf).
+    func deleteDevices(serials: [String]) async {
+        guard !serials.isEmpty else { return }
+        let ctx = persistence.newBackgroundContext()
+        for chunk in stride(from: 0, to: serials.count, by: 1_000).map({ Array(serials[$0 ..< min($0 + 1_000, serials.count)]) }) {
+            let ok: Bool = await ctx.perform {
+                let req = CDDevice.fetchRequest()
+                req.predicate = NSPredicate(format: "serialNumber IN %@", chunk)
+                for cd in (try? ctx.fetch(req)) ?? [] { ctx.delete(cd) }
+                return self.persistence.save(ctx)
+            }
+            if !ok { persistenceFailure = true }
+        }
+        persistence.viewContext.refreshAllObjects()
+    }
+
     /// Direct CoreData fetch for the sync merge step.
     /// Unlike store.devices (which depends on the throttled UI reload chain),
     /// this always reads the latest committed data from a fresh background context.
@@ -1553,6 +1569,8 @@ extension ExportColumn {
         .init(id: "assignedMdmServerName", label: "MDM Server",              enabled: true),
         .init(id: "mdmServerType",         label: "MDM Server Type",         enabled: false),
         .init(id: "axmCoverageStatus",     label: "Coverage Status",         enabled: true),
+        .init(id: "axmCoveragePlanType",   label: "Coverage Type",           enabled: true),
+        .init(id: "axmCoverageStartDate",  label: "Coverage Start Date",     enabled: false),
         .init(id: "axmCoverageEndDate",    label: "Coverage End Date",       enabled: true),
         .init(id: "axmAgreementNumber",    label: "AppleCare Agreement #",   enabled: true),
         .init(id: "axmWifiMacAddress",     label: "Wi-Fi MAC Address",       enabled: false),
@@ -1594,6 +1612,8 @@ extension Device {
         case "mdmServerType":         return mdmServerType.flatMap { MdmServerType(rawValue: $0)?.label } ?? mdmServerType
         case "axmCoverageStatus":     return coverageStatus.label
         case "axmCoverageEndDate":    return axmCoverageEndDate
+        case "axmCoveragePlanType":   return coverageTypeLabel
+        case "axmCoverageStartDate":  return coveragePlanRecords.max(by: { $0.end < $1.end })?.start.nilIfEmpty
         case "axmAgreementNumber":    return axmAgreementNumber
         case "axmWifiMacAddress":     return axmWifiMacAddress
         case "axmBluetoothMacAddress": return axmBluetoothMacAddress
@@ -1623,4 +1643,42 @@ extension Device {
         default:                      return nil
         }
     }
+}
+
+// MARK: - Coverage plan records (export)
+// Parsed from axmCoverageRawJson — every plan Apple returned, oldest first. Same source the
+// Devices detail "Coverage" cards read, so no schema field is needed.
+private struct CoveragePlanRecord {
+    let description: String
+    let start:       String
+    let end:         String
+}
+
+private extension Device {
+    /// Every device has a Limited Warranty, so it is only the type when no AppleCare plan
+    /// exists; otherwise the AppleCare plan (latest-ending if several) is the type.
+    var coverageTypeLabel: String? {
+        let plans = coveragePlanRecords
+        let care = plans.filter { $0.description.localizedCaseInsensitiveContains("AppleCare") }
+        return (care.max(by: { $0.end < $1.end }) ?? plans.max(by: { $0.end < $1.end }))?.description
+    }
+
+    var coveragePlanRecords: [CoveragePlanRecord] {
+        guard let data = axmCoverageRawJson,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let records = json["data"] as? [[String: Any]] else { return [] }
+        return records.compactMap { record -> CoveragePlanRecord? in
+            guard let a = record["attributes"] as? [String: Any],
+                  let desc = a["description"] as? String, !desc.isEmpty else { return nil }
+            return CoveragePlanRecord(
+                description: desc,
+                start:       String(((a["startDateTime"] as? String) ?? "").prefix(10)),
+                end:         String(((a["endDateTime"] as? String) ?? "").prefix(10))
+            )
+        }.sorted { $0.start < $1.start }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
