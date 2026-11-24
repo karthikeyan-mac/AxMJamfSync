@@ -727,6 +727,9 @@ struct CacheSettingsPanel: View {
     @State private var alwaysRefreshCoverage = false
     @State private var skipExistingCoverage  = false
     @State private var alwaysRefreshDevices  = false
+    @State private var fetchActivationLock   = false
+    @State private var alwaysRefreshActivationLock = false
+    @State private var activationLockLimitText = ""
     @State private var syncDeviceScope: SyncDeviceScope = .both
 
     private var scopeAbbrev: String { store.axmCredentials.scope == .school ? "ASM" : "ABM" }
@@ -794,6 +797,21 @@ struct CacheSettingsPanel: View {
                         value: $prefs.devicesCacheDays, range: 0...30)
                     .opacity(alwaysRefreshDevices ? 0.4 : 1.0)
                     .disabled(alwaysRefreshDevices)
+                    TogglePref(
+                        label: "Quick-Sync New Devices",
+                        info: InfoContent(
+                            icon:    "plus.circle",
+                            title:   "Quick-Sync New Devices",
+                            summary: "While the device cache is still valid, each sync asks Apple only for devices added since the last check, then fetches their coverage and writes it back to Jamf.",
+                            bullets: [
+                                "When new devices are found, the Jamf inventory is refreshed in the same sync so they can be linked and written back.",
+                                "Released devices and other status changes are only picked up by the full device download when the Device Cache expires.",
+                                "Has no effect when Device Cache is 0 or Force Refresh Devices is on — every sync is already a full download."
+                            ]
+                        ),
+                        isOn: $prefs.quickSyncNewDevices)
+                    .opacity((alwaysRefreshDevices || prefs.devicesCacheDays == 0) ? 0.4 : 1.0)
+                    .disabled(alwaysRefreshDevices || prefs.devicesCacheDays == 0)
                     StepperPref(
                         label: "Coverage Cache (days)",
                         info: InfoContent(
@@ -913,6 +931,91 @@ struct CacheSettingsPanel: View {
 
                     Divider()
 
+                    // Activation Lock — opt-in, one Apple API call per device (like coverage)
+                    TogglePref(
+                        label: "Fetch Activation Lock Status",
+                        info: InfoContent(
+                            icon:    "lock.laptopcomputer",
+                            title:   "Fetch Activation Lock Status",
+                            summary: "Checks each device's Activation Lock state (MDM, user or none) from \(scopeAbbrev).",
+                            bullets: [
+                                "Off by default — it adds one \(scopeAbbrev) API call per device, like warranty coverage.",
+                                "Honors 'Sync Device Types'. Results are cached for the number of days below.",
+                                "Display only — nothing is written to Jamf."
+                            ]
+                        ),
+                        isOn: $fetchActivationLock)
+                        .onChange(of: fetchActivationLock) { _, val in
+                            prefs.fetchActivationLock = val
+                        }
+
+                    Group {
+                        StepperPref(
+                            label: "Activation Lock Cache (days)",
+                            info: InfoContent(
+                                icon:    "clock.arrow.circlepath",
+                                title:   "Activation Lock Cache Duration",
+                                summary: "How many days a device's Activation Lock result stays valid before being re-fetched.",
+                                bullets: [
+                                    "Set to 0 to re-check on every sync.",
+                                    "Has no effect when 'Force Refresh Activation Lock' is enabled."
+                                ]
+                            ),
+                            value: $prefs.activationLockCacheDays, range: 0...90)
+                            .opacity(alwaysRefreshActivationLock ? 0.4 : 1.0)
+                            .disabled(alwaysRefreshActivationLock)
+
+                        HStack {
+                            InfoLabel(
+                                text: "Activation Lock Fetch Limit",
+                                info: InfoContent(
+                                    icon:    "gauge.with.dots.needle.67percent",
+                                    title:   "Activation Lock Fetch Limit",
+                                    summary: "Limits how many devices are checked for Activation Lock in a single sync run.",
+                                    bullets: [
+                                        "Set to 0 to check all devices (no limit).",
+                                        "Enter a number (e.g. 500) to cap each run — the next sync picks up where the last one stopped."
+                                    ]
+                                ))
+                            Spacer()
+                            HStack(spacing: 6) {
+                                TextField("0", text: $activationLockLimitText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 72)
+                                    .onChange(of: activationLockLimitText) { _, newVal in
+                                        let digits  = newVal.filter(\.isNumber)
+                                        let clamped = min(Int(digits) ?? 0, 100_000)
+                                        prefs.activationLockLimit = clamped
+                                        if digits != newVal { activationLockLimitText = digits }
+                                    }
+                                Text(prefs.activationLockLimit == 0 ? "= all" : "devices/run")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .frame(width: 70, alignment: .leading)
+                            }
+                        }
+
+                        TogglePref(
+                            label: "Force Refresh Activation Lock",
+                            info: InfoContent(
+                                icon:    "arrow.clockwise.circle.fill",
+                                title:   "Force Refresh Activation Lock",
+                                summary: "Forces the next sync to re-check Activation Lock for every device, ignoring any saved results.",
+                                bullets: [
+                                    "Independent of 'Force Refresh Coverage' — either can run alone.",
+                                    "Automatically turns itself back off after the sync finishes."
+                                ]
+                            ),
+                            isOn: $alwaysRefreshActivationLock)
+                            .onChange(of: alwaysRefreshActivationLock) { _, val in
+                                prefs.alwaysRefreshActivationLock = val
+                            }
+                    }
+                    .disabled(!fetchActivationLock)
+                    .opacity(fetchActivationLock ? 1.0 : 0.4)
+
+                    Divider()
+
                     // Cache location + delete
                     VStack(alignment: .leading, spacing: 4) {
                         InfoLabel(
@@ -973,6 +1076,9 @@ struct CacheSettingsPanel: View {
             skipExistingCoverage  = prefs.skipExistingCoverage
             alwaysRefreshDevices  = prefs.alwaysRefreshDevices
             syncDeviceScope       = prefs.syncDeviceScope
+            fetchActivationLock   = prefs.fetchActivationLock
+            alwaysRefreshActivationLock = prefs.alwaysRefreshActivationLock
+            activationLockLimitText = String(prefs.activationLockLimit)
         }
         .disabled(isRunning)
         .opacity(isRunning ? 0.5 : 1)

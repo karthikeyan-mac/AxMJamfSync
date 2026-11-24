@@ -107,6 +107,7 @@ final class AppStore: ObservableObject {
     @Published var checkinFreshnessFilter: String?  = nil { didSet { scheduleFilter() } }  // AppStore.checkinBucketLabel(for:)
     @Published var expiringWindowFilter:   String?  = nil { didSet { scheduleFilter() } }  // AppStore.expiringWindowLabel(for:)
     @Published var mdmMigrationCapableFilter: String? = nil { didSet { scheduleFilter() } }  // AppStore.mdmMigrationCapableLabel(for:)
+    @Published var activationLockFilter:      String? = nil { didSet { scheduleFilter() } }  // Device.activationLockLabel
     @Published var certExpiringWindowFilter: String? = nil { didSet { scheduleFilter() } }  // AppStore.certExpiringWindowLabel(for:)
     @Published var architectureFilter:       String? = nil { didSet { scheduleFilter() } }  // AppStore.architectureLabel(for:)
     @Published var ramFilter:                String? = nil { didSet { scheduleFilter() } }  // AppStore.ramLabel(for:)
@@ -134,6 +135,7 @@ final class AppStore: ObservableObject {
         checkinFreshnessFilter = nil
         expiringWindowFilter  = nil
         mdmMigrationCapableFilter = nil
+        activationLockFilter  = nil
         certExpiringWindowFilter = nil
         architectureFilter    = nil
         ramFilter             = nil
@@ -160,6 +162,7 @@ final class AppStore: ObservableObject {
         if let v = checkinFreshnessFilter { return "Check-in: \(v)" }
         if let v = expiringWindowFilter  { return "Expiring: \(v) days" }
         if let v = mdmMigrationCapableFilter { return "MDM Migration: \(v)" }
+        if let v = activationLockFilter  { return "Activation Lock: \(v)" }
         if let v = certExpiringWindowFilter { return "MDM Cert Expiring: \(v) days" }
         if let v = architectureFilter    { return "Architecture: \(v)" }
         if let v = ramFilter             { return "RAM: \(v)" }
@@ -182,6 +185,7 @@ final class AppStore: ObservableObject {
         checkinFreshnessFilter = nil
         expiringWindowFilter   = nil
         mdmMigrationCapableFilter = nil
+        activationLockFilter  = nil
         certExpiringWindowFilter = nil
         architectureFilter     = nil
         ramFilter              = nil
@@ -200,7 +204,7 @@ final class AppStore: ObservableObject {
                    axmStatus: String? = nil, productFamily: String? = nil, purchaseSource: String? = nil,
                    addedToOrgYear: String? = nil, jamfManaged: Bool? = nil, osVersion: String? = nil,
                    fileVault: String? = nil, checkin: String? = nil, expiringWindow: String? = nil,
-                   mdmMigrationCapable: String? = nil, certExpiringWindow: String? = nil,
+                   mdmMigrationCapable: String? = nil, activationLock: String? = nil, certExpiringWindow: String? = nil,
                    architecture: String? = nil, ram: String? = nil,
                    osBehind: String? = nil, osBehindLatestVersion: Int? = nil,
                    axmMigrationStatus: String? = nil, migrationDeadlineWindow: String? = nil) {
@@ -220,6 +224,7 @@ final class AppStore: ObservableObject {
         checkinFreshnessFilter = checkin
         expiringWindowFilter   = expiringWindow
         mdmMigrationCapableFilter = mdmMigrationCapable
+        activationLockFilter   = activationLock
         certExpiringWindowFilter = certExpiringWindow
         architectureFilter     = architecture
         ramFilter              = ram
@@ -424,7 +429,7 @@ final class AppStore: ObservableObject {
         axmStatus: String?, productFamily: String?, purchaseSource: String?,
         addedToOrgYear: String?, jamfManaged: Bool?, osVersion: String?,
         fileVault: String?, checkin: String?, expiringWindow: String?,
-        mdmMigrationCapable: String?, certExpiringWindow: String?,
+        mdmMigrationCapable: String?, activationLock: String?, certExpiringWindow: String?,
         architecture: String?, ram: String?,
         osBehind: String?, osBehindLatestVersion: Int?,
         axmMigrationStatus: String?, migrationDeadlineWindow: String?
@@ -458,6 +463,9 @@ final class AppStore: ObservableObject {
         }
         if let mc = mdmMigrationCapable {
             guard d.deviceSource != .jamfOnly, d.axmDeviceId != nil, Self.mdmMigrationCapableLabel(for: d) == mc else { return false }
+        }
+        if let al = activationLock {
+            guard d.deviceSource != .jamfOnly, d.axmDeviceId != nil, Self.activationLockFacetLabel(for: d) == al else { return false }
         }
         if let ce = certExpiringWindow {
             guard d.deviceSource != .axmOnly, Self.certExpiringWindowLabel(for: d) == ce else { return false }
@@ -512,7 +520,7 @@ final class AppStore: ObservableObject {
         axmStatus: String?, productFamily: String?, purchaseSource: String?,
         addedToOrgYear: String?, jamfManaged: Bool?, osVersion: String?,
         fileVault: String?, checkin: String?, expiringWindow: String?,
-        mdmMigrationCapable: String?, certExpiringWindow: String?,
+        mdmMigrationCapable: String?, activationLock: String?, certExpiringWindow: String?,
         architecture: String?, ram: String?,
         osBehind: String?, osBehindLatestVersion: Int?,
         axmMigrationStatus: String?, migrationDeadlineWindow: String?
@@ -541,7 +549,7 @@ final class AppStore: ObservableObject {
             axmStatus: axmStatus, productFamily: productFamily, purchaseSource: purchaseSource,
             addedToOrgYear: addedToOrgYear, jamfManaged: jamfManaged, osVersion: osVersion,
             fileVault: fileVault, checkin: checkin, expiringWindow: expiringWindow,
-            mdmMigrationCapable: mdmMigrationCapable, certExpiringWindow: certExpiringWindow,
+            mdmMigrationCapable: mdmMigrationCapable, activationLock: activationLock, certExpiringWindow: certExpiringWindow,
             architecture: architecture, ram: ram,
             osBehind: osBehind, osBehindLatestVersion: osBehindLatestVersion,
             axmMigrationStatus: axmMigrationStatus, migrationDeadlineWindow: migrationDeadlineWindow) { return false }
@@ -566,6 +574,7 @@ final class AppStore: ObservableObject {
         let checkinF   = checkinFreshnessFilter
         let expiringF  = expiringWindowFilter
         let mdmCapF    = mdmMigrationCapableFilter
+        let alF        = activationLockFilter
         let certExpF   = certExpiringWindowFilter
         let archF      = architectureFilter
         let ramF       = ramFilter
@@ -575,7 +584,7 @@ final class AppStore: ObservableObject {
         let migDeadlineF  = migrationDeadlineWindowFilter
         let noDrillDown = axmStatusF == nil && familyF == nil && purchaseF == nil && yearF == nil
                        && managedF == nil && osVerF == nil && fvF == nil && checkinF == nil && expiringF == nil
-                       && mdmCapF == nil && certExpF == nil && archF == nil && ramF == nil && osBehindF == nil
+                       && mdmCapF == nil && alF == nil && certExpF == nil && archF == nil && ramF == nil && osBehindF == nil
                        && axmMigStatusF == nil && migDeadlineF == nil
 
         let result: [Device]
@@ -588,7 +597,7 @@ final class AppStore: ObservableObject {
                     axmStatus: axmStatusF, productFamily: familyF, purchaseSource: purchaseF,
                     addedToOrgYear: yearF, jamfManaged: managedF, osVersion: osVerF,
                     fileVault: fvF, checkin: checkinF, expiringWindow: expiringF,
-                    mdmMigrationCapable: mdmCapF, certExpiringWindow: certExpF,
+                    mdmMigrationCapable: mdmCapF, activationLock: alF, certExpiringWindow: certExpF,
                     architecture: archF, ram: ramF,
                     osBehind: osBehindF, osBehindLatestVersion: osBehindLatestF,
                     axmMigrationStatus: axmMigStatusF, migrationDeadlineWindow: migDeadlineF)
@@ -758,6 +767,7 @@ final class AppStore: ObservableObject {
         let checkinF   = checkinFreshnessFilter
         let expiringF  = expiringWindowFilter
         let mdmCapF    = mdmMigrationCapableFilter
+        let alF        = activationLockFilter
         let certExpF   = certExpiringWindowFilter
         let archF      = architectureFilter
         let ramF       = ramFilter
@@ -767,7 +777,7 @@ final class AppStore: ObservableObject {
         let migDeadlineF  = migrationDeadlineWindowFilter
         let noDrillDown = axmStatusF == nil && familyF == nil && purchaseF == nil && yearF == nil
                        && managedF == nil && osVerF == nil && fvF == nil && checkinF == nil && expiringF == nil
-                       && mdmCapF == nil && certExpF == nil && archF == nil && ramF == nil && osBehindF == nil
+                       && mdmCapF == nil && alF == nil && certExpF == nil && archF == nil && ramF == nil && osBehindF == nil
                        && axmMigStatusF == nil && migDeadlineF == nil
 
         Task.detached(priority: .userInitiated) { [weak self] in
@@ -781,7 +791,7 @@ final class AppStore: ObservableObject {
                         axmStatus: axmStatusF, productFamily: familyF, purchaseSource: purchaseF,
                         addedToOrgYear: yearF, jamfManaged: managedF, osVersion: osVerF,
                         fileVault: fvF, checkin: checkinF, expiringWindow: expiringF,
-                        mdmMigrationCapable: mdmCapF, certExpiringWindow: certExpF,
+                        mdmMigrationCapable: mdmCapF, activationLock: alF, certExpiringWindow: certExpF,
                         architecture: archF, ram: ramF,
                         osBehind: osBehindF, osBehindLatestVersion: osBehindLatestF,
                         axmMigrationStatus: axmMigStatusF, migrationDeadlineWindow: migDeadlineF)
@@ -885,6 +895,11 @@ final class AppStore: ObservableObject {
         if daysOut <= 60 { return "31–60" }
         if daysOut <= 90 { return "61–90" }
         return nil
+    }
+    /// Facet/drill-down label for Activation Lock: Device.activationLockLabel, or
+    /// "Not Fetched" when the status was never retrieved (the donut omits those).
+    nonisolated static func activationLockFacetLabel(for d: Device) -> String {
+        d.activationLockLabel ?? "Not Fetched"
     }
     nonisolated static func mdmMigrationCapableLabel(for d: Device) -> String {
         switch d.axmMdmMigrationCapable {
@@ -1025,6 +1040,7 @@ final class AppStore: ObservableObject {
                     s.mdmUnassigned += 1
                 }
                 s.mdmMigrationCapableBreakdown[Self.mdmMigrationCapableLabel(for: d), default: 0] += 1
+                if let lock = d.activationLockLabel { s.activationLockBreakdown[lock, default: 0] += 1 }
                 s.axmMigrationStatusBreakdown[Self.axmMigrationStatusLabel(for: d), default: 0] += 1
                 switch Self.migrationDeadlineWindowLabel(for: d) {
                 case "0–30":  s.axmMigrationDeadline30 += 1
@@ -1268,12 +1284,14 @@ final class AppStore: ObservableObject {
     @Published var axmDashboardProductFamilyFacet:  String? = nil { didSet { recomputeAxmDashboardStats() } }  // productFamilyLabel
     @Published var axmDashboardPurchaseSourceFacet: String? = nil { didSet { recomputeAxmDashboardStats() } }  // "Apple" / "Reseller" / "Manually Added" / "Unknown"
     @Published var axmDashboardMdmFacet:            String? = nil { didSet { recomputeAxmDashboardStats() } }  // mdmAssignedSentinel / mdmUnassignedSentinel
+    @Published var axmDashboardActivationLockFacet: String? = nil { didSet { recomputeAxmDashboardStats() } }  // activationLockFacetLabel
     @Published private(set) var axmDashboardStats = DashboardStats()
     private var axmDashboardStatsGeneration = 0
 
     var axmDashboardFacetCount: Int {
         [axmDashboardStatusFacet != nil, axmDashboardProductFamilyFacet != nil,
-         axmDashboardPurchaseSourceFacet != nil, axmDashboardMdmFacet != nil].filter { $0 }.count
+         axmDashboardPurchaseSourceFacet != nil, axmDashboardMdmFacet != nil,
+         axmDashboardActivationLockFacet != nil].filter { $0 }.count
     }
 
     func clearAxmDashboardFacets() {
@@ -1281,12 +1299,15 @@ final class AppStore: ObservableObject {
         axmDashboardProductFamilyFacet  = nil
         axmDashboardPurchaseSourceFacet = nil
         axmDashboardMdmFacet            = nil
+        axmDashboardActivationLockFacet = nil
     }
 
     private nonisolated static func matchesAxmDashboardFacets(_ d: Device,
-        status: String?, productFamily: String?, purchaseSource: String?, mdm: String?
+        status: String?, productFamily: String?, purchaseSource: String?, mdm: String?,
+        activationLock: String?
     ) -> Bool {
         guard d.deviceSource != .jamfOnly else { return false }   // Apple dashboard population
+        if let al = activationLock, Self.activationLockFacetLabel(for: d) != al { return false }
         if let st = status,         (d.axmDeviceStatus?.uppercased() ?? "") != st          { return false }
         if let pf = productFamily,  Self.productFamilyLabel(for: d)         != pf           { return false }
         if let ps = purchaseSource, Self.purchaseSourceLabel(for: d)        != ps           { return false }
@@ -1302,10 +1323,11 @@ final class AppStore: ObservableObject {
         let family   = axmDashboardProductFamilyFacet
         let purchase = axmDashboardPurchaseSourceFacet
         let mdm      = axmDashboardMdmFacet
+        let lock     = axmDashboardActivationLockFacet
         Task.detached(priority: .userInitiated) {
             let filtered = snapshot.filter {
                 AppStore.matchesAxmDashboardFacets($0, status: status, productFamily: family,
-                                                    purchaseSource: purchase, mdm: mdm)
+                                                    purchaseSource: purchase, mdm: mdm, activationLock: lock)
             }
             let result = AppStore.computeStats(from: filtered)
             await MainActor.run { [weak self] in
@@ -1582,6 +1604,7 @@ extension ExportColumn {
         .init(id: "axmMdmMigrationCapable", label: "MDM Migration Capable",  enabled: false),
         .init(id: "axmMdmMigrationStatus", label: "MDM Migration Status",    enabled: false),
         .init(id: "axmMdmMigrationDeadline", label: "MDM Migration Deadline", enabled: false),
+        .init(id: "axmActivationLock",     label: "Activation Lock",         enabled: false),
         .init(id: "axmPurchaseSource",     label: "Purchase Source",         enabled: true),
         .init(id: "wbStatus",              label: "Jamf Update Status",      enabled: true),
         .init(id: "wbPushedAt",            label: "Jamf Update Pushed At",   enabled: false),
@@ -1624,6 +1647,7 @@ extension Device {
         case "axmMdmMigrationCapable": return axmMdmMigrationCapable
         case "axmMdmMigrationStatus": return axmMdmMigrationStatus
         case "axmMdmMigrationDeadline": return axmMdmMigrationDeadline
+        case "axmActivationLock":     return activationLockLabel
         case "axmPurchaseSource":     return axmPurchaseSource
         case "wbStatus":              return wbStatus?.label
         case "wbPushedAt":            return wbPushedAt

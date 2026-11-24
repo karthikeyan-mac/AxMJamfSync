@@ -641,6 +641,7 @@ extension CDDevice {
         axmMdmMigrationCapableRaw = d.axmMdmMigrationCapable
         axmMdmMigrationStatus  = d.axmMdmMigrationStatus
         axmMdmMigrationDeadline = d.axmMdmMigrationDeadline
+        axmActivationLock = d.axmActivationLock
         wbStatus            = d.wbStatus?.rawValue
         wbNote              = d.wbNote
         jamfId              = d.jamfId
@@ -676,6 +677,7 @@ extension CDDevice {
         let parseISO = CDDevice.parseISO
         axmDeviceFetchedAt   = d.axmDeviceFetchedAt.flatMap  { parseISO($0) }
         axmCoverageFetchedAt = d.axmCoverageFetchedAt.flatMap { parseISO($0) }
+        axmActivationLockFetchedAt = d.axmActivationLockFetchedAt.flatMap { parseISO($0) }
         wbPushedAt           = d.wbPushedAt.flatMap          { parseISO($0) }
         jamfReportDate       = d.jamfReportDate.flatMap       { parseISO($0) }
         jamfLastContact      = d.jamfLastContact.flatMap      { parseISO($0) }
@@ -715,6 +717,8 @@ extension CDDevice {
             axmMdmMigrationCapable: axmMdmMigrationCapableRaw,
             axmMdmMigrationStatus: axmMdmMigrationStatus,
             axmMdmMigrationDeadline: axmMdmMigrationDeadline,
+            axmActivationLock: axmActivationLock,
+            axmActivationLockFetchedAt: fmt(axmActivationLockFetchedAt),
             wbStatus:             WBStatus(rawValue: wbStatus ?? ""),
             wbPushedAt:           fmt(wbPushedAt),
             wbNote:               wbNote,

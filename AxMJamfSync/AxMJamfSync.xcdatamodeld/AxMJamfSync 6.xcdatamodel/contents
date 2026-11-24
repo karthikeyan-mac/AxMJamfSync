@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0"
+       lastSavedToolsVersion="21754" systemVersion="22F82"
+       minimumToolsVersion="Automatic" sourceLanguage="Swift"
+       userDefinedModelVersionIdentifier="">
+
+    <entity name="CDDevice" representedClassName="CDDevice"
+            syncable="YES" codeGenerationType="class">
+
+        <attribute name="serialNumber"         optional="NO"  attributeType="String"/>
+        <attribute name="deviceSource"         optional="NO"  attributeType="String" defaultValueString="AXM_ONLY"/>
+
+        <!-- AxM -->
+        <attribute name="axmDeviceId"          optional="YES" attributeType="String"/>
+        <attribute name="axmDeviceStatus"      optional="YES" attributeType="String"/>
+        <attribute name="axmDeviceFetchedAt"   optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="axmPurchaseSource"    optional="YES" attributeType="String"/>
+        <attribute name="axmPurchaseSourceId"  optional="YES" attributeType="String"/>   <!-- purchaseSourceId from ABM -->
+        <attribute name="axmOrderNumber"       optional="YES" attributeType="String"/>   <!-- orderNumber from ABM -->
+        <attribute name="axmOrderDate"         optional="YES" attributeType="String"/>   <!-- orderDateTime YYYY-MM-DD from ABM -->
+        <attribute name="axmAddedToOrgDate"    optional="YES" attributeType="String"/>   <!-- addedToOrgDateTime YYYY-MM-DD from ABM — reliably populated, unlike orderDate -->
+        <attribute name="axmModel"             optional="YES" attributeType="String"/>
+        <attribute name="axmDeviceModel"       optional="YES" attributeType="String"/>
+        <attribute name="axmDeviceClass"       optional="YES" attributeType="String"/>
+        <attribute name="axmProductFamily"     optional="YES" attributeType="String"/>   <!-- "Mac" | "iPad" | "iPhone" | "AppleTV" -->
+        <attribute name="axmRawJson"           optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES"/>
+        <attribute name="axmCoverageRawJson"   optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES"/>
+
+        <!-- Coverage -->
+        <attribute name="axmCoverageStatus"    optional="YES" attributeType="String"/>
+        <attribute name="axmCoverageEndDate"   optional="YES" attributeType="String"/>
+        <attribute name="axmCoverageFetchedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="axmActivationLock"          optional="YES" attributeType="String"/>   <!-- lockType: "MDM" | "USER" | "NONE"; nil = not fetched -->
+        <attribute name="axmActivationLockFetchedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="axmAgreementNumber"   optional="YES" attributeType="String"/>
+        <attribute name="axmWifiMacAddress"      optional="YES" attributeType="String"/>
+        <attribute name="axmBluetoothMacAddress" optional="YES" attributeType="String"/>
+        <attribute name="axmEthernetMacAddress"  optional="YES" attributeType="String"/>   <!-- joined ", " — ABM returns an array -->
+        <attribute name="axmImei"                optional="YES" attributeType="String"/>   <!-- joined ", " — ABM returns an array -->
+        <attribute name="axmMeid"                optional="YES" attributeType="String"/>   <!-- joined ", " — ABM returns an array -->
+        <attribute name="axmEid"                 optional="YES" attributeType="String"/>
+        <!-- axmMdmMigrationCapable (no attribute of this name declared here on purpose):
+             different real environments on disk already have a column of this exact name
+             under DIFFERENT types (INTEGER in some, VARCHAR in others — from different
+             earlier, uncommitted builds). No single orphan declaration can match all of
+             them, so the name is dropped from the model entirely instead — lightweight
+             migration treats that uniformly as "attribute removed" regardless of the
+             source type, unlike a type change, which it can't bridge. See
+             axmMdmMigrationCapableRaw for the field actually used. -->
+        <attribute name="axmMdmMigrationCapableRaw" optional="YES" attributeType="String"/>   <!-- "True" | "False" — tri-state, nil = not yet populated by Apple -->
+        <attribute name="axmMdmMigrationStatus"  optional="YES" attributeType="String"/>   <!-- "REQUESTED" | "STARTED" | "SUCCESS" | "FAILED" -->
+        <attribute name="axmMdmMigrationDeadline" optional="YES" attributeType="String"/>  <!-- raw ISO 8601 — never parsed to Date at this layer -->
+
+        <!-- Write-back -->
+        <attribute name="wbStatus"             optional="YES" attributeType="String"/>
+        <attribute name="wbPushedAt"           optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="wbNote"               optional="YES" attributeType="String"/>
+
+        <!-- Jamf -->
+        <attribute name="jamfId"               optional="YES" attributeType="String"/>
+        <attribute name="jamfName"             optional="YES" attributeType="String"/>
+        <attribute name="jamfManaged"          optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="jamfModel"            optional="YES" attributeType="String"/>
+        <attribute name="jamfModelIdentifier"  optional="YES" attributeType="String"/>
+        <attribute name="jamfMacAddress"       optional="YES" attributeType="String"/>
+        <attribute name="jamfReportDate"       optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="jamfLastContact"      optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="jamfLastEnrolled"     optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="jamfMdmCertExpiration" optional="YES" attributeType="Date" usesScalarValueType="NO"/>   <!-- LEGACY — orphaned on purpose, see jamfMdmCertExpirationRaw. Left in place (never written to, never read) purely so its Date type never has to change in-place, which lightweight migration can't infer. Safe to remove entirely in a future version bump that includes a real mapping model. -->
+        <attribute name="jamfMdmCertExpirationRaw" optional="YES" attributeType="String"/>   <!-- general.mdmCertificateExpiration — raw string, not parsed to Date; Jamf doesn't consistently return this in a fractional/plain ISO8601 shape, and formatISO() on the display side already handles multiple formats gracefully -->
+        <attribute name="jamfInitialEntryDate" optional="YES" attributeType="String"/>   <!-- general.initialEntryDate, "YYYY-MM-DD" — shown as "Enrolled Date" -->
+        <attribute name="jamfProcessorType"    optional="YES" attributeType="String"/>   <!-- hardware.processorType -->
+        <attribute name="jamfRamGB"            optional="YES" attributeType="String"/>   <!-- hardware.totalRamMegabytes, pre-converted to whole GB -->
+        <attribute name="jamfWarrantyDate"     optional="YES" attributeType="String"/>
+        <attribute name="jamfVendor"           optional="YES" attributeType="String"/>
+        <attribute name="jamfAppleCareId"      optional="YES" attributeType="String"/>
+        <attribute name="jamfOsVersion"        optional="YES" attributeType="String"/>
+        <attribute name="jamfDeviceType"       optional="YES" attributeType="String"/>   <!-- "computer" | "mobile" -->
+        <attribute name="jamfFileVaultStatus"  optional="YES" attributeType="String"/>
+        <attribute name="jamfUsername"         optional="YES" attributeType="String"/>
+
+        <!-- MDM Server assignment (from /v1/mdmServers/{id}/relationships/devices) -->
+        <attribute name="assignedMdmServerId"   optional="YES" attributeType="String"/>
+        <attribute name="assignedMdmServerName" optional="YES" attributeType="String"/>
+        <attribute name="mdmServerType"         optional="YES" attributeType="String"/>
+
+        <!-- S2: Jamf write-back rebinding guard. Both additive/optional (lightweight migration only).
+             jamfValidationStatus: "validated" | "pendingRevalidation" — nil means a pre-S2 row and is
+             treated as "validated" (pre-fix behaviour assumed the cached serial→jamfId map was always
+             trustworthy). Set to "pendingRevalidation" the moment the Jamf URL/clientId changes, and
+             flipped back to "validated" per-device only when that serial is freshly re-matched against
+             the newly configured host. See ARCHITECTURE.md "Jamf write-back is gated on mapping revalidation". -->
+        <attribute name="jamfValidationStatus"    optional="YES" attributeType="String"/>
+        <attribute name="lastValidatedJamfOrigin" optional="YES" attributeType="String"/>   <!-- canonical Jamf origin (normalised base URL + clientId) the current jamfId mapping was last confirmed against -->
+
+
+        <!-- Metadata -->
+        <attribute name="createdAt"            optional="NO"  attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="updatedAt"            optional="NO"  attributeType="Date" usesScalarValueType="NO"/>
+
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="serialNumber"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+
+    <entity name="CDSyncRun" representedClassName="CDSyncRun"
+            syncable="YES" codeGenerationType="class">
+        <attribute name="id"              optional="NO"  attributeType="UUID"       usesScalarValueType="NO"/>
+        <attribute name="startedAt"       optional="NO"  attributeType="Date"       usesScalarValueType="NO"/>
+        <attribute name="finishedAt"      optional="YES" attributeType="Date"       usesScalarValueType="NO"/>
+        <attribute name="phase"           optional="NO"  attributeType="String"     defaultValueString="IDLE"/>
+        <attribute name="axmFetched"      optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="jamfFetched"     optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="coverageFetched" optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="wbSynced"        optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="wbFailed"        optional="NO"  attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="errorMessage"    optional="YES" attributeType="String"/>
+    </entity>
+
+</model>

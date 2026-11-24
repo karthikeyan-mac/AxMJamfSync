@@ -20,7 +20,7 @@ struct AxMDashboardContent: View {
   private func drillDown(axmStatus: String? = nil, productFamily: String? = nil,
                           purchaseSource: String? = nil, addedToOrgYear: String? = nil,
                           mdmServer: String? = nil, expiringWindow: String? = nil,
-                          mdmMigrationCapable: String? = nil, coverage: CoverageStatus? = nil,
+                          mdmMigrationCapable: String? = nil, activationLock: String? = nil, coverage: CoverageStatus? = nil,
                           axmMigrationStatus: String? = nil, migrationDeadlineWindow: String? = nil) {
     store.drillDown(coverage: coverage,
                      mdmServer: mdmServer ?? store.axmDashboardMdmFacet,
@@ -30,8 +30,22 @@ struct AxMDashboardContent: View {
                      addedToOrgYear: addedToOrgYear,
                      expiringWindow: expiringWindow,
                      mdmMigrationCapable: mdmMigrationCapable,
+                     activationLock: activationLock ?? store.axmDashboardActivationLockFacet,
                      axmMigrationStatus: axmMigrationStatus, migrationDeadlineWindow: migrationDeadlineWindow)
     navigateToDevices()
+  }
+
+  // Colour by meaning, not rank — "Not Locked" must not inherit the warning colour.
+  private func activationLockSegments(_ breakdown: [String: Int]) -> [DonutSegment] {
+    DonutChartView.segments(from: breakdown, palette: [.secondary]).map { seg in
+      let color: Color
+      switch seg.label {
+      case "MDM Locked", "User Locked": color = .orange
+      case "Not Locked":                color = .green
+      default:                          color = .secondary
+      }
+      return DonutSegment(label: seg.label, value: seg.value, color: color)
+    }
   }
 
   var body: some View {
@@ -154,6 +168,23 @@ struct AxMDashboardContent: View {
                                 onTapRow: { name in drillDown(mdmServer: name) })
                 }
                 .frame(maxWidth: .infinity)
+              }
+            }
+          }
+          if !fs.activationLockBreakdown.isEmpty {
+            CardSection(title: "Activation Lock", icon: "lock.laptopcomputer") {
+              HStack(spacing: 20) {
+                DonutChartView(
+                  segments: activationLockSegments(fs.activationLockBreakdown),
+                  centerTitle: "\(fs.activationLockBreakdown.values.reduce(0, +))", centerSubtitle: "devices")
+                  .frame(width: 130, height: 130)
+                VStack(alignment: .leading, spacing: 8) {
+                  ForEach(activationLockSegments(fs.activationLockBreakdown)) { seg in
+                    DashboardDrillDown(action: { drillDown(activationLock: seg.label) }) {
+                      CoverageLegendRow(label: seg.label, value: seg.value, color: seg.color)
+                    }
+                  }
+                }
               }
             }
           }
@@ -338,6 +369,11 @@ private struct AxMDashboardFacetBar: View {
                       options: productFamilyOptions,
                       selection: store.facetBinding(\.axmDashboardProductFamilyFacet))
 
+        FacetChipMenu(icon: "lock.laptopcomputer", title: "Activation Lock",
+                      options: [("All", nil), ("MDM Locked", "MDM Locked"), ("User Locked", "User Locked"),
+                                ("Not Locked", "Not Locked"), ("Unknown", "Unknown"), ("Not Fetched", "Not Fetched")],
+                      selection: store.facetBinding(\.axmDashboardActivationLockFacet))
+
         FacetChipMenu(icon: "cart", title: "Purchase Source",
                       options: [("All", nil), ("Apple", "Apple"), ("Reseller", "Reseller"),
                                 ("Manually Added", "Manually Added"), ("Unknown", "Unknown")],
@@ -362,6 +398,9 @@ private struct AxMDashboardFacetBar: View {
           }
           if let ps = store.axmDashboardPurchaseSourceFacet {
             FacetActiveChip(label: ps) { store.axmDashboardPurchaseSourceFacet = nil }
+          }
+          if let al = store.axmDashboardActivationLockFacet {
+            FacetActiveChip(label: "Activation Lock: \(al)") { store.axmDashboardActivationLockFacet = nil }
           }
           Text("^[\(matchCount) device](inflect: true) match")
             .font(.caption)

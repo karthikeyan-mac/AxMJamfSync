@@ -435,10 +435,20 @@ struct LogWindowView: View {
     // when new lines should auto-follow. Toggled by the anchor's onAppear/
     // onDisappear since SwiftUI has no direct scroll-offset API before macOS 15
     // (this app's floor is macOS 14).
-    @State private var isAtBottom = true
+    // Tail tracking must not be @State: the sentinel's appear/disappear flips as the
+    // list grows, and each @State write re-evaluated the whole body (hang samples:
+    // LogWindowView.isAtBottom.setter on every one). The flag lives in a plain box;
+    // only the debounced Jump button visibility is @State.
+    @State private var tail = LogTailState()
+    @State private var showJump = false
     @State private var showClearConfirm = false
 
     private static let bottomAnchorId = "log-bottom-anchor"
+
+    // Rendering all 2,000 buffered rows on every refresh pins the main thread in a
+    // Debug build during a verbose sync (hang sample: LogWindowView.body / isAtBottom
+    // setter). Only the newest rows are drawn; the full buffer still backs counts + search.
+    private static let maxRenderedRows = 400
 
     // filterLevel == .warn means "Warn+" — warn and error together — since a
     // segmented control has no room for a genuine multi-select and "everything
@@ -454,7 +464,17 @@ struct LogWindowView: View {
             let q = searchText.lowercased()
             result = result.filter { $0.message.lowercased().contains(q) }
         }
-        return result
+        return Array(result.suffix(Self.maxRenderedRows))
+    }
+
+    private func scheduleJumpRefresh() {
+        tail.pending?.cancel()
+        tail.pending = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            let want = !tail.isAtBottom
+            if showJump != want { showJump = want }
+        }
     }
 
     var body: some View {
@@ -551,21 +571,21 @@ struct LogWindowView: View {
                             // is visible.
                             Color.clear.frame(height: 1)
                                 .id(Self.bottomAnchorId)
-                                .onAppear { isAtBottom = true }
-                                .onDisappear { isAtBottom = false }
+                                .onAppear { tail.isAtBottom = true; scheduleJumpRefresh() }
+                                .onDisappear { tail.isAtBottom = false; scheduleJumpRefresh() }
                         }
                         .padding(.horizontal, 8).padding(.vertical, 4)
                     }
                     .onChange(of: displayedEntries.count) { _, _ in
-                        guard searchText.isEmpty, isAtBottom, let last = visibleEntries.last else { return }
+                        guard searchText.isEmpty, tail.isAtBottom, let last = visibleEntries.last else { return }
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
                     .onChange(of: filterLevel) { _, _ in
-                        guard isAtBottom, let last = visibleEntries.last else { return }
+                        guard tail.isAtBottom, let last = visibleEntries.last else { return }
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
 
-                    if !isAtBottom && searchText.isEmpty {
+                    if showJump && searchText.isEmpty {
                         Button {
                             withAnimation { proxy.scrollTo(Self.bottomAnchorId, anchor: .bottom) }
                         } label: {
@@ -588,12 +608,17 @@ struct LogWindowView: View {
         }
         .onReceive(
             log.objectWillChange
-                .throttle(for: .milliseconds(125), scheduler: DispatchQueue.main, latest: true)
+                .throttle(for: .milliseconds(400), scheduler: DispatchQueue.main, latest: true)
         ) { _ in
             displayedEntries = log.entries
             displayedWarnCount = log.warnCount
         }
     }
+}
+
+final class LogTailState {
+    var isAtBottom = true
+    var pending: Task<Void, Never>?
 }
 
 // MARK: - Log line

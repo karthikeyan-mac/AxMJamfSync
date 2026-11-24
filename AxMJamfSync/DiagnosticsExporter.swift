@@ -98,10 +98,13 @@ enum DiagnosticsExporter {
     Coverage Cache Days: \(prefs.coverageCacheDays)
     Coverage Limit     : \(prefs.coverageLimit == 0 ? "unlimited" : "\(prefs.coverageLimit)/run")
     Do Not Refetch     : \(prefs.skipExistingCoverage ? "on" : "off")
+    Activation Lock    : \(prefs.fetchActivationLock ? "on (cache \(prefs.activationLockCacheDays)d, limit \(prefs.activationLockLimit == 0 ? "unlimited" : "\(prefs.activationLockLimit)/run"))" : "off")
     Sync Device Types  : \(prefs.syncDeviceScope.label)
     Last AxM Sync      : \(prefs.lastAxmSync.map { iso.string(from: $0) } ?? "never")
+    Last Quick Check   : \(prefs.axmQuickSyncCheck.map { iso.string(from: $0) } ?? "never") (quick sync \(prefs.quickSyncNewDevices ? "on" : "off"))
     Last Jamf Sync     : \(prefs.lastJamfSync.map { iso.string(from: $0) } ?? "never")
     Last Coverage Sync : \(prefs.lastCoverageSync.map { iso.string(from: $0) } ?? "never")
+    Last ActLock Sync  : \(prefs.lastActivationLockSync.map { iso.string(from: $0) } ?? "never")
     Last Run Outcome   : \(prefs.lrOutcome)
     """
   }
