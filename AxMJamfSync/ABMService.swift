@@ -65,6 +65,20 @@ private struct ABMDeviceAttributes: Codable {
     let mdmMigrationDeadlineDateTime: String?
 }
 
+/// Activation Lock response — GET /v1/orgDevices/{id}/activationLockStatus
+private struct ABMActivationLockResponse: Decodable {
+    let data: ABMActivationLockRecord?
+}
+
+private struct ABMActivationLockRecord: Decodable {
+    let attributes: ABMActivationLockAttributes?
+}
+
+private struct ABMActivationLockAttributes: Decodable {
+    let isLocked: Bool?
+    let lockType: String?   // "MDM" | "USER" | "NONE"
+}
+
 /// Paginated list response
 private struct ABMDeviceListResponse: Decodable {
     let data: [ABMDeviceRecord]
@@ -247,6 +261,7 @@ actor ABMService {
         resumeCursor:    String? = nil,
         debugPageLimit:  Int = 0,          // DEBUG: stop after this many devices (0 = no limit)
         batchFlushPages: Int = 10,         // commit to CoreData + advance cursor every N pages
+        filters:         [URLQueryItem] = [],  // sent identically on every page — Apple rejects a cursor whose filters changed
         onProgress:      @Sendable @MainActor (Int, Int) -> Void,
         onBatchReady:    @Sendable @MainActor ([RawABMDevice], String?) async throws -> Void  // (batch, nextCursor)
     ) async throws -> [RawABMDevice] {     // partial on network failure; throws only if a batch fails to commit
@@ -290,7 +305,7 @@ actor ABMService {
             }
             var queryItems: [URLQueryItem] = [
                 URLQueryItem(name: "limit", value: String(limit)),
-            ]
+            ] + filters
             if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
             components.queryItems = queryItems
 
@@ -491,6 +506,80 @@ actor ABMService {
         }
 
         return DeviceCoverage(status: status, endDate: endDate, agreement: attrs.agreementNumber, rawJson: data)
+    }
+
+    // MARK: - Public: fetch Activation Lock status for one device
+
+    /// Single attempt. Returns "MDM" | "USER" | "NONE", or "UNKNOWN" when Apple has no
+    /// status for the device (404) or the payload carries no usable fields.
+    func fetchActivationLock(deviceId: String, session: URLSession) async throws -> String {
+        let token = try await validToken()
+        guard let url = URL(string: baseURL + "/v1/orgDevices/\(deviceId)/activationLockStatus") else {
+            throw ABMError.networkError("Invalid activation lock URL for deviceId=\(deviceId)")
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue((Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "AxMJamfSync/\($0)" } ?? "AxMJamfSync/1.1", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
+
+        if let http = response as? HTTPURLResponse, http.statusCode == 404 { return "UNKNOWN" }
+        try await validateHTTP(response, data: data, context: "ABM /v1/orgDevices/\(deviceId)/activationLockStatus")
+
+        let attrs = try JSONDecoder().decode(ABMActivationLockResponse.self, from: data).data?.attributes
+        guard let isLocked = attrs?.isLocked else { return "UNKNOWN" }
+        guard isLocked else { return "NONE" }
+        let type = attrs?.lockType?.uppercased()
+        return (type == "MDM" || type == "USER") ? type! : "UNKNOWN"
+    }
+
+    // One long-lived session so requests multiplex over a single HTTP/2 connection
+    // instead of opening ~1 TLS connection per device. Replaced (not cancelled) when a
+    // request reports a lost connection, so in-flight siblings can finish.
+    private var activationLockSession: URLSession = _makeABMCoverageSession()
+
+    private func replaceActivationLockSession(ifStill used: URLSession) {
+        guard used === activationLockSession else { return }
+        activationLockSession.finishTasksAndInvalidate()
+        activationLockSession = _makeABMCoverageSession()
+    }
+
+    /// Connection resets retry up to 3 times (2s, 5s back-off) on a fresh session;
+    /// token errors refresh once; 429 backs off 15s once.
+    func fetchActivationLockResilient(deviceId: String) async -> ActivationLockOutcome {
+        let backoffs: [UInt64] = [2_000_000_000, 5_000_000_000]
+        var attempt = 0
+        var tokenRetried = false
+        var rateRetried = false
+        while true {
+            let used = activationLockSession
+            let began = Date()
+            do {
+                return .ok(try await fetchActivationLock(deviceId: deviceId, session: used))
+            } catch let e as URLError {
+                await log.debug("[ActLock] attempt \(attempt + 1) URLError \(e.code.rawValue) after \(Int(Date().timeIntervalSince(began) * 1000))ms")
+                replaceActivationLockSession(ifStill: used)
+                guard attempt < backoffs.count else {
+                    return .skipped("URLError \(e.code.rawValue): \(e.localizedDescription)")
+                }
+                try? await Task.sleep(nanoseconds: backoffs[attempt])
+                attempt += 1
+            } catch {
+                let msg = error.localizedDescription.lowercased()
+                if msg.contains("400") || msg.contains("401") || msg.contains("unauthori") || msg.contains("token") || msg.contains("invalid_client") {
+                    guard !tokenRetried else { return .authFailed }
+                    tokenRetried = true
+                    clearToken()
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                } else if msg.contains("429") || msg.contains("rate") {
+                    guard !rateRetried else { return .rateLimited }
+                    rateRetried = true
+                    try? await Task.sleep(nanoseconds: 15_000_000_000)
+                } else {
+                    return .skipped(error.localizedDescription)
+                }
+            }
+        }
     }
 
     // MARK: - Public: fetch all MDM servers
@@ -874,6 +963,13 @@ struct DeviceCoverage: Sendable {
     let endDate:   String?   // YYYY-MM-DD
     let agreement: String?
     let rawJson:   Data?     // full JSON response body from /v1/orgDevices/{id}/appleCareCoverage
+}
+
+enum ActivationLockOutcome: Sendable {
+    case ok(String)
+    case skipped(String)
+    case authFailed
+    case rateLimited
 }
 
 // MARK: - ABMError

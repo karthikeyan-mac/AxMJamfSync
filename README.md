@@ -35,6 +35,7 @@ AxM Jamf Sync runs a four-step pipeline on demand:
 | **1 — AxM Devices** | Downloads every device record from your ABM or ASM organisation |
 | **2 — Jamf Inventory** | Downloads computers and mobile devices from Jamf Pro |
 | **3 — AppleCare Coverage** | Fetches warranty and AppleCare status from Apple's coverage API |
+| **3b — Activation Lock** *(optional)* | Checks each device's Activation Lock state (MDM, user, or not locked) from Apple. Off by default, display-only |
 | **4 — Jamf Update** | Writes warranty date, AppleCare agreement number, vendor, PO number, and PO date back to each matching Jamf record |
 
 The result: every device record in Jamf Pro shows accurate, up-to-date warranty and purchasing information pulled straight from Apple — no spreadsheets, no manual entry.
@@ -186,6 +187,8 @@ Full guides: [Project Wiki](https://github.com/karthikeyan-mac/AxMJamfSync/wiki)
 ## Sync behaviour
 
 - **Caching** — device list cached 1 day, coverage 7 days by default. Second run same day skips re-downloading unless Force Refresh is enabled
+- **Quick-Sync New Devices** (v3.2, on by default) — while the device cache is still valid, each sync asks Apple only for devices added since the last check, fetches their coverage, refreshes Jamf so they can be matched, and writes them back in the same run. Released devices and other status changes are picked up by the full download when the Device Cache expires
+- **Activation Lock** (v3.2, off by default) — optional per-device Activation Lock check with its own cache days, fetch limit, and force refresh. One Apple API call per device, so use the fetch limit on large fleets. Shown on the Apple dashboard and in device details; never written to Jamf
 - **Sync Device Types** — choose Mac + Mobile (default), Mac Only, or Mobile Only
 - **Coverage Fetch Limit** — cap Apple API calls per run; next run resumes exactly where the last stopped
 - **Do Not Refetch** — skip devices already checked, reducing API calls significantly
@@ -219,7 +222,7 @@ AxMJamfSync/
 ├── AppPreferences.swift          — UserDefaults (env-namespaced in v2)
 ├── PersistenceController.swift   — CoreData stack, per-environment SQLite
 ├── KeychainService.swift         — Keychain CRUD, env-namespaced credentials
-├── ABMService.swift              — Apple ABM/ASM API (devices + coverage)
+├── ABMService.swift              — Apple ABM/ASM API (devices, coverage, Activation Lock)
 ├── JamfService.swift             — Jamf Pro API (computers + mobile + PATCH)
 ├── SyncEngine.swift              — 4-step pipeline orchestration
 ├── LogService.swift              — Per-environment log (UI + rotating file)

@@ -86,6 +86,11 @@ final class SyncEngine: ObservableObject {
     private var coverageStartTime: Date?
     private var coverageStartIndex: Int = 0
     private var stepStartTime: Date?
+    // Quick sync (cache-fresh Step 1) state, written from the fetch's @MainActor
+    // batch callback. Reset at the start of each quick fetch.
+    private var quickNewSerials:     Set<String> = []
+    private var quickNeedsJamf       = false
+    private var quickFetchComplete   = false
 
     // MARK: - Restore last run summary
     //
@@ -165,12 +170,14 @@ final class SyncEngine: ObservableObject {
         // Snapshot the one-shot flags BEFORE clearing them so _run can honour them
         let forceDevices  = store.prefs.alwaysRefreshDevices
         let forceCoverage = store.prefs.alwaysRefreshCoverage
+        let forceActivationLock = store.prefs.alwaysRefreshActivationLock
         // S2: one-shot — set by EnvironmentStore when the Jamf URL/clientId changed.
         // Forces a full Jamf inventory re-fetch (Step 2 only; Apple Step 1 stays
         // cache-governed) so the serial→Jamf-ID map is rebuilt against the new host.
         let forceJamf     = store.prefs.forceFullJamfRefetch
         store.prefs.alwaysRefreshDevices  = false
         store.prefs.alwaysRefreshCoverage = false
+        store.prefs.alwaysRefreshActivationLock = false
         store.prefs.forceFullJamfRefetch  = false
         // Only request notification authorisation when status is undetermined —
         // re-requesting after grant/deny is a no-op but avoids an unnecessary system call.
@@ -184,7 +191,7 @@ final class SyncEngine: ObservableObject {
         tabBadge = "●"
         if !SyncNotificationService.isSuppressed { NSApp.dockTile.badgeLabel = "1/4" }
         syncTask = Task {
-            await _run(store: store, forceDevices: forceDevices, forceCoverage: forceCoverage, forceJamf: forceJamf)
+            await _run(store: store, forceDevices: forceDevices, forceCoverage: forceCoverage, forceActivationLock: forceActivationLock, forceJamf: forceJamf)
             heldLock?.release()
         }
     }
@@ -223,6 +230,104 @@ final class SyncEngine: ObservableObject {
         }
     }
 
+    // MARK: - Step 3b: Activation Lock
+
+    private func runActivationLockStep(store: AppStore, force: Bool) async {
+        guard let abm = activeABM else { return }
+        let prefs = store.prefs
+        let scope = prefs.syncDeviceScope
+        let cutoff = Double(prefs.activationLockCacheDays) * 86_400
+        let now = Date()
+
+        let eligible = store.devices.filter {
+            guard $0.deviceSource != .jamfOnly && $0.axmDeviceId != nil else { return false }
+            switch scope {
+            case .both:   return true
+            case .mac:    return !$0.isMobile
+            case .mobile: return $0.isMobile
+            }
+        }
+        let notFetched = eligible.filter { $0.axmActivationLockFetchedAt == nil }
+        // Core Data hands the timestamp back with fractional seconds, which a default
+        // ISO8601DateFormatter rejects — without this no device ever went stale.
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoPlain = ISO8601DateFormatter()
+        let stale = eligible.filter {
+            guard let s = $0.axmActivationLockFetchedAt,
+                  let d = isoFrac.date(from: s) ?? isoPlain.date(from: s) else { return false }
+            return now.timeIntervalSince(d) > cutoff
+        }
+        let needs = force ? eligible : (notFetched.isEmpty ? stale : notFetched)
+        let limit = prefs.activationLockLimit
+        let targets = Array(needs.prefix(limit > 0 ? limit : needs.count))
+
+        guard !targets.isEmpty else {
+            log.info("Activation Lock — all devices already have fresh status — skipping.")
+            return
+        }
+        log.info("Step 3b — Fetching Activation Lock for \(targets.count) device(s)" + (limit > 0 ? " (limit: \(limit))" : ""))
+        phase = .coverage; stepStartTime = Date(); stepElapsed = ""
+        totalSteps = targets.count; currentStep = 0
+
+        var batch: [Device] = []
+        var counts = (mdm: 0, user: 0, none: 0, unknown: 0)
+        var processed = 0
+        let concurrency = 1   // Apple resets connections under overlap on this endpoint (URLError -1005)
+
+        chunkLoop: for start in stride(from: 0, to: targets.count, by: concurrency) {
+            if Task.isCancelled { break }
+            if start > 0 { try? await Task.sleep(nanoseconds: 500_000_000) }
+            let chunk = Array(targets[start ..< min(start + concurrency, targets.count)])
+
+            let results: [(Device, ActivationLockOutcome)] = await withTaskGroup(of: (Device, ActivationLockOutcome).self) { group in
+                for device in chunk {
+                    group.addTask { (device, await abm.fetchActivationLockResilient(deviceId: device.axmDeviceId ?? "")) }
+                }
+                var out: [(Device, ActivationLockOutcome)] = []
+                for await r in group { out.append(r) }
+                return out
+            }
+
+            for (device, outcome) in results {
+                processed += 1
+                currentStep = min(start + concurrency, targets.count)
+                stepLabel = "Fetching Activation Lock [\(processed)/\(targets.count)] \(device.serialNumber)"
+                switch outcome {
+                case .ok(let value):
+                    switch value {
+                    case "MDM":  counts.mdm += 1
+                    case "USER": counts.user += 1
+                    case "NONE": counts.none += 1
+                    default:     counts.unknown += 1
+                    }
+                    log.info("Activation Lock [\(processed)/\(targets.count)] \(device.serialNumber): \(device.copying(axmActivationLock: Optional(value)).activationLockLabel ?? value)")
+                    batch.append(device.copying(
+                        axmActivationLock: Optional(value),
+                        axmActivationLockFetchedAt: Optional(_iso8601.string(from: Date()))))
+                case .skipped(let msg):
+                    log.warn("Activation Lock [\(processed)/\(targets.count)] \(device.serialNumber): skipped — \(msg)")
+                case .rateLimited:
+                    log.warn("Activation Lock [\(processed)/\(targets.count)] \(device.serialNumber): rate-limit retry failed — skipping")
+                case .authFailed:
+                    log.error("Activation Lock: auth failed after retry — aborting step.")
+                    store.axmAuthStatus = .failure("Activation Lock auth error — re-authenticate in Setup.")
+                    break chunkLoop
+                }
+            }
+
+            if batch.count >= 50 {
+                await store.upsertDevices(batch)
+                batch.removeAll()
+                await store.loadDevicesFromCoreDataSync()
+            }
+        }
+        if !batch.isEmpty { await store.upsertDevices(batch) }
+        await store.loadDevicesFromCoreDataSync()
+        if processed >= needs.count { prefs.lastActivationLockSync = Date() }
+        log.info("Activation Lock: \(processed) checked — \(counts.mdm) MDM-locked, \(counts.user) user-locked, \(counts.none) not locked, \(counts.unknown) unknown.")
+    }
+
     func resetCache(store: AppStore) async {
         await store.wipeCache()
         log.info("Cache reset — CoreData wiped, timestamps cleared.")
@@ -230,7 +335,7 @@ final class SyncEngine: ObservableObject {
 
     // MARK: - Main pipeline
 
-    private func _run(store: AppStore, forceDevices: Bool = false, forceCoverage: Bool = false, forceJamf: Bool = false) async {
+    private func _run(store: AppStore, forceDevices: Bool = false, forceCoverage: Bool = false, forceActivationLock: Bool = false, forceJamf: Bool = false) async {
         // S1: services are built with an immutable environment identity taken here,
         // once, from the store — never looked up again mid-pipeline. Abort rather
         // than run against an ambiguous or mismatched identity.
@@ -375,6 +480,7 @@ final class SyncEngine: ObservableObject {
         var rawABM:    [RawABMDevice]         = []
         var rawJamf:   [RawJamfComputer]      = []
         var rawMobile: [RawJamfMobileDevice]  = []
+        var axmQuickSync   = false   // Step 1 ran as a quick (new-devices-only) fetch — never stamps lastAxmSync
         var pruneComputers = false   // set only after a complete, non-empty Jamf fetch
         var pruneMobile    = false
         // serial → (serverId, serverName, serverType) — built after orgDevices fetch
@@ -438,7 +544,10 @@ final class SyncEngine: ObservableObject {
                 prefs.resetSyncTimestamps()   // realign timestamps with actual data state
             }
 
-            if !forceDevices && prefs.axmIsFresh && !coreDataEmpty {
+            let axmCacheFresh = !forceDevices && prefs.axmIsFresh && !coreDataEmpty
+            let quickSince = (prefs.axmQuickSyncCheck ?? prefs.lastAxmSync).map { $0.addingTimeInterval(-86_400) }
+            axmQuickSync = axmCacheFresh && prefs.quickSyncNewDevices && quickSince != nil
+            if axmCacheFresh && !axmQuickSync {
                 log.info("Step 1/4 — AxM cache fresh (last synced \(prefs.display(prefs.lastAxmSync))), skipping.")
             } else {
                 // If Force Refresh Devices is ON, discard any saved resume cursor —
@@ -448,7 +557,16 @@ final class SyncEngine: ObservableObject {
                     log.info("Step 1/4 — Force Refresh: cleared saved resume cursor.")
                 }
                 phase     = .axmDevices; stepStartTime = Date(); stepElapsed = ""
-                log.info("Step 1/4 — Fetching AxM org devices")
+                let axmFetchStartedAt = Date()
+                var quickFilters: [URLQueryItem] = []
+                if axmQuickSync, let since = quickSince {
+                    let sinceStr = ISO8601DateFormatter().string(from: since)
+                    quickFilters = [URLQueryItem(name: "filter[addedToOrgDateTime][GTE]", value: sinceStr)]
+                    quickNewSerials = []; quickNeedsJamf = false; quickFetchComplete = false
+                    log.info("Step 1/4 — AxM cache fresh (full fetch last ran \(prefs.display(prefs.lastAxmSync))) — quick sync: checking for devices added since \(sinceStr).")
+                } else {
+                    log.info("Step 1/4 — Fetching AxM org devices")
+                }
 
                 if store.axmCredentials.clientId.isEmpty
                     || store.axmCredentials.keyId.isEmpty
@@ -467,7 +585,7 @@ final class SyncEngine: ObservableObject {
                     let currentIdentity = KeychainService.tokenIdentity(
                         origin:   store.axmCredentials.scope.baseURL,
                         clientId: store.axmCredentials.clientId)
-                    let savedCursor: String? = {
+                    let savedCursor: String? = axmQuickSync ? nil : {
                         guard prefs.axmResumeScope == currentScopeRaw,
                               let c = prefs.axmResumeCursor, !c.isEmpty else { return nil }
                         // Empty identity == cursor written before this key existed — accept
@@ -476,7 +594,7 @@ final class SyncEngine: ObservableObject {
                         guard savedIdentity.isEmpty || savedIdentity == currentIdentity else { return nil }
                         return c
                     }()
-                    if savedCursor == nil, prefs.axmResumeCursor != nil {
+                    if !axmQuickSync, savedCursor == nil, prefs.axmResumeCursor != nil {
                         log.warn("Step 1/4 — Discarding saved AxM resume cursor: scope or credential identity changed since it was written.")
                         prefs.clearAxmResumeCursor()
                     }
@@ -494,15 +612,45 @@ final class SyncEngine: ObservableObject {
                         resumeCursor:   savedCursor,
                         debugPageLimit: debugPageLimit,
                         batchFlushPages: 10,
+                        filters:        quickFilters,
                         onProgress: { [weak self] fetched, total in
                             guard let self else { return }
                             self.totalSteps  = max(total, fetched)
                             self.currentStep = fetched
-                            self.stepLabel   = "Fetching org devices from Apple… \(fetched)/\(max(total, fetched))"
+                            self.stepLabel   = axmQuickSync
+                                ? "Checking Apple for newly added devices… \(fetched)"
+                                : "Fetching org devices from Apple… \(fetched)/\(max(total, fetched))"
                             if let s = self.stepStartTime { self.stepElapsed = Self.fmtElapsed(-s.timeIntervalSinceNow) }
                         },
                         onBatchReady: { [weak self] batch, nextCursor in
                             guard let self else { return }
+                            // Quick sync: the 1-day overlap re-returns known devices — commit only
+                            // ones with no Apple record yet, and never touch the resume cursor (a
+                            // replayed cursor would lose its filter and become a full fetch).
+                            if axmQuickSync {
+                                if !batch.isEmpty {
+                                    let existingSnap = await store.fetchDevicesForMerge(serials: Set(batch.map(\.serialNumber)))
+                                    let existingBySerial = Dictionary(existingSnap.map { ($0.serialNumber, $0) }, uniquingKeysWith: { a, _ in a })
+                                    let newOnes = batch.filter { existingBySerial[$0.serialNumber]?.axmDeviceId == nil }
+                                    if !newOnes.isEmpty {
+                                        let jamfOriginSnap = store.jamfCredentials.canonicalOrigin
+                                        let mergedBatch = await Task.detached(priority: .userInitiated) {
+                                            mergeDevicesOffActor(abm: newOnes, jamf: [], mobile: [],
+                                                                 existing: existingSnap, jamfOrigin: jamfOriginSnap)
+                                        }.value.devices
+                                        try await store.upsertDevicesDurably(mergedBatch.map { $0.toDevice() })
+                                        self.quickNewSerials.formUnion(newOnes.map(\.serialNumber))
+                                        if newOnes.contains(where: { existingBySerial[$0.serialNumber] == nil }) {
+                                            self.quickNeedsJamf = true
+                                        }
+                                    }
+                                }
+                                if nextCursor == nil {
+                                    self.quickFetchComplete = true
+                                    prefs.axmQuickSyncCheck = axmFetchStartedAt
+                                }
+                                return
+                            }
                             // S3: durably commit this batch to CoreData BEFORE advancing the
                             // resume cursor. Merge with no Jamf input (same shape as the
                             // cache-fresh and Stop-partial merges) so Jamf fields already on
@@ -537,6 +685,7 @@ final class SyncEngine: ObservableObject {
                                 self.log.info("Batch committed: \(batch.count) device(s) saved (\(prefs.axmResumedDeviceCount) total), resume cursor advanced to \(cursor.prefix(20))…")
                             } else {
                                 prefs.clearAxmResumeCursor()
+                                prefs.axmQuickSyncCheck = axmFetchStartedAt
                                 self.log.info("AxM fetch complete — resume cursor cleared.")
                             }
                         }
@@ -544,12 +693,26 @@ final class SyncEngine: ObservableObject {
                     // fetchOrgDevices returns partial on network failure; it throws only
                     // if a batch failed to commit (handled by _run's catch below).
                     // rawABM is empty only if credentials were bad or the fetch never started.
-                    runAxmCount = rawABM.count
-                    if rawABM.isEmpty && savedCursor == nil {
-                        log.warn("Step 1/4 — AxM fetch returned 0 devices. Check credentials and network.")
+                    if axmQuickSync {
+                        let returned = rawABM.count
+                        rawABM = rawABM.filter { quickNewSerials.contains($0.serialNumber) }
+                        runAxmCount = rawABM.count
+                        if !quickFetchComplete {
+                            log.warn("Step 1/4 — Quick sync check did not complete (\(returned) device(s) received) — will retry next run. Full fetch still due on cache expiry.")
+                        } else if rawABM.isEmpty {
+                            log.info("Step 1/4 — Quick sync: no new devices (\(returned) recently added device(s) already in cache).")
+                        } else {
+                            log.info("Step 1/4 — Quick sync: \(rawABM.count) new device(s) added to cache.")
+                            log.debug("[Detail] Quick sync new devices: \(rawABM.map(\.serialNumber).sorted().joined(separator: ", "))")
+                        }
                     } else {
-                        let pages = max(1, (rawABM.count + pageSize - 1) / pageSize)
-                        log.info("AxM: fetched \(rawABM.count) devices across \(pages) page(s) this run.")
+                        runAxmCount = rawABM.count
+                        if rawABM.isEmpty && savedCursor == nil {
+                            log.warn("Step 1/4 — AxM fetch returned 0 devices. Check credentials and network.")
+                        } else {
+                            let pages = max(1, (rawABM.count + pageSize - 1) / pageSize)
+                            log.info("AxM: fetched \(rawABM.count) devices across \(pages) page(s) this run.")
+                        }
                     }
                 }
             }
@@ -622,10 +785,13 @@ final class SyncEngine: ObservableObject {
 
             if !jamfAuthPassed {
                 // warning already logged above — Jamf skipped
-            } else if !forceDevices && !forceJamf && prefs.jamfIsFresh && !coreDataEmpty {
+            } else if !forceDevices && !forceJamf && prefs.jamfIsFresh && !coreDataEmpty && !(axmQuickSync && quickNeedsJamf) {
                 log.info("Step 2/4 — Jamf cache fresh (last synced \(prefs.display(prefs.lastJamfSync))), skipping.")
             } else {
                 phase     = .jamf; stepStartTime = Date(); stepElapsed = ""
+                if axmQuickSync && quickNeedsJamf && prefs.jamfIsFresh {
+                    log.info("Step 2/4 — Quick sync found new Apple devices — refreshing Jamf inventory so they can be linked and written back this run.")
+                }
                 if forceJamf {
                     log.info("Step 2/4 — Full Jamf re-fetch (connection changed) — rebuilding the serial→Jamf-ID map against the current host.")
                 }
@@ -764,7 +930,7 @@ final class SyncEngine: ObservableObject {
                 // IMPORTANT: do NOT stamp lastAxmSync if a resume cursor is still saved —
                 // a partial fetch is not complete. axmIsFresh must stay false so the next
                 // run re-enters Phase 1 and continues from the cursor.
-                let axmFetchComplete = !rawABM.isEmpty && prefs.axmResumeCursor == nil
+                let axmFetchComplete = !rawABM.isEmpty && prefs.axmResumeCursor == nil && !axmQuickSync
                 if axmFetchComplete { prefs.lastAxmSync  = Date() }
                 if !rawJamf.isEmpty || !rawMobile.isEmpty { prefs.lastJamfSync = Date() }
                 // Persist active scope so relaunch always restores the right ABM/ASM context
@@ -1089,6 +1255,18 @@ final class SyncEngine: ObservableObject {
                     }
                     stepETA = ""; totalETA = ""
                 }
+            }
+
+            // ── Step 3b: Activation Lock (opt-in, one Apple API call per device) ──
+            if prefs.fetchActivationLock && prefs.axmResumeCursor == nil,
+               !store.axmCredentials.clientId.isEmpty, !store.axmCredentials.keyId.isEmpty,
+               !store.axmCredentials.privateKeyContent.isEmpty {
+                if case .failure = store.axmAuthStatus {
+                    log.warn("Activation Lock — AxM auth failed — skipping.")
+                } else {
+                    await runActivationLockStep(store: store, force: forceActivationLock)
+                }
+                try Task.checkCancellation()
             }
 
             // ── Pre-Step 4: Reset .failed → .pending ────────────────────
@@ -1684,7 +1862,7 @@ final class SyncEngine: ObservableObject {
                 await store.loadDevicesFromCoreDataSync()
                 // Only stamp lastAxmSync if no resume cursor is pending — a partial
                 // fetch must not mark the cache as fresh.
-                if !rawABM.isEmpty && prefs.axmResumeCursor == nil { prefs.lastAxmSync  = Date() }
+                if !rawABM.isEmpty && prefs.axmResumeCursor == nil && !axmQuickSync { prefs.lastAxmSync  = Date() }
                 if !rawJamf.isEmpty || !rawMobile.isEmpty { prefs.lastJamfSync = Date() }
                 prefs.activeScope = store.axmCredentials.scope.rawValue
                 prefs.dataCachedScope = store.axmCredentials.scope.rawValue
@@ -1783,6 +1961,8 @@ private func mergeDevicesOffActor(
                     axmMdmMigrationCapable: d.axmMdmMigrationCapable,
                     axmMdmMigrationStatus: d.axmMdmMigrationStatus,
                     axmMdmMigrationDeadline: d.axmMdmMigrationDeadline,
+                    axmActivationLock: d.axmActivationLock,
+                    axmActivationLockFetchedAt: d.axmActivationLockFetchedAt,
                     wbStatus:             d.wbStatus,
                     wbPushedAt:           d.wbPushedAt,
                     wbNote:               d.wbNote,
@@ -1864,6 +2044,8 @@ private func mergeDevicesOffActor(
                 axmMdmMigrationCapable: d.isMdmMigrationCapable ?? ex?.axmMdmMigrationCapable,
                 axmMdmMigrationStatus: d.mdmMigrationStatus  ?? ex?.axmMdmMigrationStatus,
                 axmMdmMigrationDeadline: d.mdmMigrationDeadline ?? ex?.axmMdmMigrationDeadline,
+                axmActivationLock: ex?.axmActivationLock,
+                axmActivationLockFetchedAt: ex?.axmActivationLockFetchedAt,
                 // wbStatus rules for the ABM loop:
                 //   axmOnly  → nil (no Jamf record to PATCH; avoids false "Pending" in dashboard)
                 //   .both, genuinely new match (was jamfOnly before) → .pending (first-time write)
@@ -2031,6 +2213,8 @@ private func mergeDevicesOffActor(
                     axmMdmMigrationCapable: ex?.axmMdmMigrationCapable,
                     axmMdmMigrationStatus: ex?.axmMdmMigrationStatus,
                     axmMdmMigrationDeadline: ex?.axmMdmMigrationDeadline,
+                    axmActivationLock: ex?.axmActivationLock,
+                    axmActivationLockFetchedAt: ex?.axmActivationLockFetchedAt,
                     wbStatus:             ex?.wbStatus,
                     wbPushedAt:           ex?.wbPushedAt,
                     wbNote:               ex?.wbNote,
@@ -2158,6 +2342,8 @@ private func mergeDevicesOffActor(
                     axmMdmMigrationCapable: ex?.axmMdmMigrationCapable,
                     axmMdmMigrationStatus: ex?.axmMdmMigrationStatus,
                     axmMdmMigrationDeadline: ex?.axmMdmMigrationDeadline,
+                    axmActivationLock: ex?.axmActivationLock,
+                    axmActivationLockFetchedAt: ex?.axmActivationLockFetchedAt,
                     wbStatus:             ex?.wbStatus,
                     wbPushedAt:           ex?.wbPushedAt,
                     wbNote:               ex?.wbNote,
@@ -2274,6 +2460,8 @@ private struct SyncDevice {
     var axmMdmMigrationCapable: String?
     var axmMdmMigrationStatus:  String?
     var axmMdmMigrationDeadline: String?
+    var axmActivationLock: String?
+    var axmActivationLockFetchedAt: String?
     var wbStatus:             WBStatus?
     var wbPushedAt:           String?   // Fix #1: carry push timestamp through merge
     var wbNote:               String?   // Fix #1: carry note through merge
@@ -2334,6 +2522,8 @@ private struct SyncDevice {
             axmMdmMigrationCapable: axmMdmMigrationCapable,
             axmMdmMigrationStatus: axmMdmMigrationStatus,
             axmMdmMigrationDeadline: axmMdmMigrationDeadline,
+            axmActivationLock: axmActivationLock,
+            axmActivationLockFetchedAt: axmActivationLockFetchedAt,
             wbStatus:             wbStatus,
             wbPushedAt:           wbPushedAt,
             wbNote:               wbNote,

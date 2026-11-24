@@ -227,6 +227,8 @@ struct Device: Identifiable, Hashable {
     let axmMdmMigrationCapable: String?   // "True" | "False" — tri-state, nil = not yet populated by Apple
     let axmMdmMigrationStatus:  String?   // "REQUESTED" | "STARTED" | "SUCCESS" | "FAILED"
     let axmMdmMigrationDeadline: String?  // raw ISO 8601 — never parsed to Date at this layer
+    let axmActivationLock:    String?   // "MDM" | "USER" | "NONE"; nil = not fetched
+    let axmActivationLockFetchedAt: String?
     let wbStatus:               WBStatus?
     let wbPushedAt:             String?
     let wbNote:                 String?
@@ -289,6 +291,23 @@ struct Device: Identifiable, Hashable {
     // so that parser is tried first here (opposite priority from the Jamf cert
     // date above, whose confirmed live format has none). Reuses the same two
     // formatter instances since both are just plain ISO8601 parsers underneath.
+    /// nil = Activation Lock never fetched for this device.
+    var activationLockLabel: String? {
+        switch axmActivationLock {
+        case "MDM":     return "MDM Locked"
+        case "USER":    return "User Locked"
+        case "NONE":    return "Not Locked"
+        case "UNKNOWN": return "Unknown"
+        default:        return nil
+        }
+    }
+    var activationLockColor: Color {
+        switch axmActivationLock {
+        case "MDM", "USER": return .orange
+        case "NONE":        return .green
+        default:            return .secondary
+        }
+    }
     var axmMdmMigrationDeadlineDate: Date? {
         guard let raw = axmMdmMigrationDeadline else { return nil }
         return Self.mdmCertExpirationParserFrac.date(from: raw)
@@ -384,6 +403,8 @@ struct Device: Identifiable, Hashable {
         axmCoverageEndDate:   String??            = nil,
         axmCoverageFetchedAt: String??            = nil,
         axmAgreementNumber:   String??            = nil,
+        axmActivationLock:    String??            = nil,
+        axmActivationLockFetchedAt: String??      = nil,
         wbStatus:             WBStatus??          = nil,
         wbPushedAt:           String??            = nil,
         wbNote:               String??            = nil,
@@ -423,6 +444,8 @@ struct Device: Identifiable, Hashable {
             axmMdmMigrationCapable: axmMdmMigrationCapable,
             axmMdmMigrationStatus: axmMdmMigrationStatus,
             axmMdmMigrationDeadline: axmMdmMigrationDeadline,
+            axmActivationLock:    axmActivationLock    ?? self.axmActivationLock,
+            axmActivationLockFetchedAt: axmActivationLockFetchedAt ?? self.axmActivationLockFetchedAt,
             wbStatus:             wbStatus             ?? self.wbStatus,
             wbPushedAt:           wbPushedAt           ?? self.wbPushedAt,
             wbNote:               wbNote               ?? self.wbNote,
@@ -508,6 +531,7 @@ struct DashboardStats {
     var mdmUnassigned:       Int = 0
     var mdmServerBreakdown:  [String: Int] = [:]  // serverName → device count
     var mdmMigrationCapableBreakdown: [String: Int] = [:]  // "Capable" / "Not Capable" / "Unknown" → count
+    var activationLockBreakdown: [String: Int] = [:]       // Device.activationLockLabel → count; devices never fetched are omitted
     var axmMigrationStatusBreakdown: [String: Int] = [:]   // "Requested" / "In Progress" / "Success" / "Failed" → count
     var axmMigrationDeadline30: Int = 0                    // in-progress migration deadline within 30 days
     var axmMigrationDeadline60: Int = 0                    // 31–60 days out
@@ -631,7 +655,7 @@ extension Device {
                axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: "Mac",
                axmCoverageStatus: "ACTIVE", axmCoverageEndDate: "2027-03-01",
                axmCoverageFetchedAt: "2026-03-03T20:07:36Z", axmAgreementNumber: "APP-123456",
-               axmWifiMacAddress: "a4:5e:60:ab:cd:ef", axmBluetoothMacAddress: "a4:5e:60:ab:cd:f0", axmEthernetMacAddress: nil, axmImei: nil, axmMeid: nil, axmEid: nil, axmMdmMigrationCapable: nil, axmMdmMigrationStatus: nil, axmMdmMigrationDeadline: nil,
+               axmWifiMacAddress: "a4:5e:60:ab:cd:ef", axmBluetoothMacAddress: "a4:5e:60:ab:cd:f0", axmEthernetMacAddress: nil, axmImei: nil, axmMeid: nil, axmEid: nil, axmMdmMigrationCapable: nil, axmMdmMigrationStatus: nil, axmMdmMigrationDeadline: nil, axmActivationLock: nil, axmActivationLockFetchedAt: nil,
                wbStatus: .synced, wbPushedAt: "2026-03-03T20:10:00Z", wbNote: nil,
                jamfId: "142", jamfName: "MacBook-Pro-KM", jamfManaged: "True",
                jamfModel: "MacBook Pro 15\"", jamfModelIdentifier: "MacBookPro8,2",
@@ -645,7 +669,7 @@ extension Device {
                axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: nil,
                axmCoverageStatus: "NO_COVERAGE", axmCoverageEndDate: nil,
                axmCoverageFetchedAt: "2026-03-03T20:07:36Z", axmAgreementNumber: nil,
-               axmWifiMacAddress: nil, axmBluetoothMacAddress: nil, axmEthernetMacAddress: nil, axmImei: nil, axmMeid: nil, axmEid: nil, axmMdmMigrationCapable: nil, axmMdmMigrationStatus: nil, axmMdmMigrationDeadline: nil,
+               axmWifiMacAddress: nil, axmBluetoothMacAddress: nil, axmEthernetMacAddress: nil, axmImei: nil, axmMeid: nil, axmEid: nil, axmMdmMigrationCapable: nil, axmMdmMigrationStatus: nil, axmMdmMigrationDeadline: nil, axmActivationLock: nil, axmActivationLockFetchedAt: nil,
                wbStatus: nil, wbPushedAt: nil, wbNote: nil,
                jamfId: nil, jamfName: nil, jamfManaged: nil, jamfModel: nil,
                jamfModelIdentifier: nil, jamfMacAddress: nil, jamfReportDate: nil,
@@ -659,7 +683,7 @@ extension Device {
                axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: "Mac",
                axmCoverageStatus: "EXPIRED", axmCoverageEndDate: "2025-01-15",
                axmCoverageFetchedAt: "2026-03-03T20:07:36Z", axmAgreementNumber: "APP-789012",
-               axmWifiMacAddress: nil, axmBluetoothMacAddress: nil, axmEthernetMacAddress: nil, axmImei: nil, axmMeid: nil, axmEid: nil, axmMdmMigrationCapable: "True", axmMdmMigrationStatus: "STARTED", axmMdmMigrationDeadline: "2026-05-01T17:00:00.000Z",
+               axmWifiMacAddress: nil, axmBluetoothMacAddress: nil, axmEthernetMacAddress: nil, axmImei: nil, axmMeid: nil, axmEid: nil, axmMdmMigrationCapable: "True", axmMdmMigrationStatus: "STARTED", axmMdmMigrationDeadline: "2026-05-01T17:00:00.000Z", axmActivationLock: nil, axmActivationLockFetchedAt: nil,
                wbStatus: .failed, wbPushedAt: nil, wbNote: "HTTP 404: computer not found",
                jamfId: "201", jamfName: "MacBook-Air-Finance", jamfManaged: "True",
                jamfModel: "MacBook Air", jamfModelIdentifier: "MacBookAir10,1",
@@ -672,7 +696,7 @@ extension Device {
                axmPurchaseSource: nil, axmPurchaseSourceId: nil, axmOrderNumber: nil, axmOrderDate: nil, axmAddedToOrgDate: nil, axmModel: nil, axmDeviceModel: nil, axmDeviceClass: nil, axmProductFamily: nil,
                axmCoverageStatus: nil, axmCoverageEndDate: nil,
                axmCoverageFetchedAt: nil, axmAgreementNumber: nil,
-               axmWifiMacAddress: nil, axmBluetoothMacAddress: nil, axmEthernetMacAddress: nil, axmImei: nil, axmMeid: nil, axmEid: nil, axmMdmMigrationCapable: nil, axmMdmMigrationStatus: nil, axmMdmMigrationDeadline: nil,
+               axmWifiMacAddress: nil, axmBluetoothMacAddress: nil, axmEthernetMacAddress: nil, axmImei: nil, axmMeid: nil, axmEid: nil, axmMdmMigrationCapable: nil, axmMdmMigrationStatus: nil, axmMdmMigrationDeadline: nil, axmActivationLock: nil, axmActivationLockFetchedAt: nil,
                wbStatus: nil, wbPushedAt: nil, wbNote: nil,
                jamfId: "305", jamfName: "Mac-IT-Desk", jamfManaged: "False",
                jamfModel: "Mac mini", jamfModelIdentifier: "Macmini9,1",

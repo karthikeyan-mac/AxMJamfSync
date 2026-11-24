@@ -19,8 +19,13 @@ enum PrefKey {
     static let coverageCacheDays      = "coverageCacheDays"
     static let coverageLimit          = "coverageLimit"
     static let alwaysRefreshDevices   = "alwaysRefreshDevices"
+    static let quickSyncNewDevices    = "quickSyncNewDevices"
     static let alwaysRefreshCoverage  = "alwaysRefreshCoverage"
     static let skipExistingCoverage   = "skipExistingCoverage"
+    static let fetchActivationLock         = "fetchActivationLock"
+    static let activationLockCacheDays     = "activationLockCacheDays"
+    static let activationLockLimit         = "activationLockLimit"
+    static let alwaysRefreshActivationLock = "alwaysRefreshActivationLock"
     // S2: one-shot flag — a full Jamf inventory re-fetch is pending because the
     // Jamf connection changed. Consumed and cleared by SyncEngine.run().
     static let forceFullJamfRefetch   = "forceFullJamfRefetch"
@@ -29,8 +34,12 @@ enum PrefKey {
     // time to detect a rebinding.
     static let jamfValidatedOrigin    = "jamfValidatedOrigin"
     static let lastAxmSyncEpoch       = "lastAxmSyncEpoch"
+    // Start time of the last complete Apple device fetch, full or quick — the
+    // addedToOrgDateTime watermark for the next quick sync. Never gates freshness.
+    static let axmQuickSyncEpoch      = "axmQuickSyncEpoch"
     static let lastJamfSyncEpoch      = "lastJamfSyncEpoch"
     static let lastCoverageSyncEpoch  = "lastCoverageSyncEpoch"
+    static let lastActivationLockSyncEpoch = "lastActivationLockSyncEpoch"
     static let exportColumnJSON       = "exportColumnJSON"
     // Last run summary — persisted so Sync UI shows previous run on next launch
     static let lrDateEpoch            = "lrDateEpoch"
@@ -124,6 +133,12 @@ final class AppPreferences: ObservableObject {
         get { bool(PrefKey.alwaysRefreshDevices, default: false) }
         set { ud.set(newValue, forKey: k(PrefKey.alwaysRefreshDevices)); objectWillChange.send() }
     }
+    /// While the device cache is fresh, still ask Apple for devices added since the
+    /// last check. The full fetch (on cache expiry) stays the authority on status.
+    var quickSyncNewDevices: Bool {
+        get { bool(PrefKey.quickSyncNewDevices, default: true) }
+        set { ud.set(newValue, forKey: k(PrefKey.quickSyncNewDevices)); objectWillChange.send() }
+    }
     var alwaysRefreshCoverage: Bool {
         get { bool(PrefKey.alwaysRefreshCoverage, default: false) }
         set { ud.set(newValue, forKey: k(PrefKey.alwaysRefreshCoverage)); objectWillChange.send() }
@@ -132,6 +147,24 @@ final class AppPreferences: ObservableObject {
     var skipExistingCoverage: Bool {
         get { bool(PrefKey.skipExistingCoverage, default: true) }
         set { ud.set(newValue, forKey: k(PrefKey.skipExistingCoverage)); objectWillChange.send() }
+    }
+
+    // MARK: - Activation Lock (opt-in — one extra Apple API call per device)
+    var fetchActivationLock: Bool {
+        get { bool(PrefKey.fetchActivationLock, default: false) }
+        set { ud.set(newValue, forKey: k(PrefKey.fetchActivationLock)); objectWillChange.send() }
+    }
+    var activationLockCacheDays: Int {
+        get { int(PrefKey.activationLockCacheDays, default: 7) }
+        set { ud.set(newValue, forKey: k(PrefKey.activationLockCacheDays)); objectWillChange.send() }
+    }
+    var activationLockLimit: Int {
+        get { int(PrefKey.activationLockLimit, default: 0) }
+        set { ud.set(newValue, forKey: k(PrefKey.activationLockLimit)); objectWillChange.send() }
+    }
+    var alwaysRefreshActivationLock: Bool {
+        get { bool(PrefKey.alwaysRefreshActivationLock, default: false) }
+        set { ud.set(newValue, forKey: k(PrefKey.alwaysRefreshActivationLock)); objectWillChange.send() }
     }
 
     // MARK: - S2: Jamf connection rebinding guard
@@ -163,10 +196,18 @@ final class AppPreferences: ObservableObject {
         get { double(PrefKey.lastCoverageSyncEpoch) }
         set { ud.set(newValue, forKey: k(PrefKey.lastCoverageSyncEpoch)) }
     }
+    private var lastActivationLockEpoch: Double {
+        get { double(PrefKey.lastActivationLockSyncEpoch) }
+        set { ud.set(newValue, forKey: k(PrefKey.lastActivationLockSyncEpoch)) }
+    }
 
     var lastAxmSync: Date? {
         get { lastAxmEpoch      > 0 ? Date(timeIntervalSince1970: lastAxmEpoch)      : nil }
         set { lastAxmEpoch      = newValue?.timeIntervalSince1970 ?? 0; objectWillChange.send() }
+    }
+    var axmQuickSyncCheck: Date? {
+        get { let e = double(PrefKey.axmQuickSyncEpoch); return e > 0 ? Date(timeIntervalSince1970: e) : nil }
+        set { ud.set(newValue?.timeIntervalSince1970 ?? 0, forKey: k(PrefKey.axmQuickSyncEpoch)) }
     }
     var lastJamfSync: Date? {
         get { lastJamfEpoch     > 0 ? Date(timeIntervalSince1970: lastJamfEpoch)     : nil }
@@ -175,6 +216,10 @@ final class AppPreferences: ObservableObject {
     var lastCoverageSync: Date? {
         get { lastCoverageEpoch > 0 ? Date(timeIntervalSince1970: lastCoverageEpoch) : nil }
         set { lastCoverageEpoch = newValue?.timeIntervalSince1970 ?? 0; objectWillChange.send() }
+    }
+    var lastActivationLockSync: Date? {
+        get { lastActivationLockEpoch > 0 ? Date(timeIntervalSince1970: lastActivationLockEpoch) : nil }
+        set { lastActivationLockEpoch = newValue?.timeIntervalSince1970 ?? 0; objectWillChange.send() }
     }
 
     // MARK: - Formatted display strings
@@ -413,6 +458,10 @@ final class AppPreferences: ObservableObject {
             PrefKey.alwaysRefreshDevices,
             PrefKey.alwaysRefreshCoverage,
             PrefKey.skipExistingCoverage,
+            PrefKey.fetchActivationLock,
+            PrefKey.activationLockCacheDays,
+            PrefKey.activationLockLimit,
+            PrefKey.alwaysRefreshActivationLock,
             PrefKey.exportColumnJSON,
             PrefKey.activeScope,
             PrefKey.dataCachedScope,
@@ -438,6 +487,7 @@ final class AppPreferences: ObservableObject {
             PrefKey.lastAxmSyncEpoch,
             PrefKey.lastJamfSyncEpoch,
             PrefKey.lastCoverageSyncEpoch,
+            PrefKey.lastActivationLockSyncEpoch,
             PrefKey.lrDateEpoch,
             PrefKey.lrElapsedSecs,
             PrefKey.lrAxmCount,
@@ -476,6 +526,8 @@ final class AppPreferences: ObservableObject {
         lastAxmEpoch      = 0
         lastJamfEpoch     = 0
         lastCoverageEpoch = 0
+        lastActivationLockEpoch = 0
+        axmQuickSyncCheck = nil
         clearAxmResumeCursor()
         objectWillChange.send()
         log.info("Preferences: sync timestamps cleared — next sync re-fetches all.")

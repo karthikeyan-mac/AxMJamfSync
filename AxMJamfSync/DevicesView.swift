@@ -656,6 +656,13 @@ struct DeviceDetailPanel: View {
                                 .font(.caption).fontWeight(.semibold)
                                 .foregroundStyle(device.coverageStatus.color)
                         }
+                        if let lock = device.activationLockLabel {
+                            HStack(spacing: 6) {
+                                Text("ACTIVATION LOCK").font(.caption).foregroundStyle(.secondary)
+                                Text(lock).font(.caption).fontWeight(.semibold)
+                                    .foregroundStyle(device.activationLockColor)
+                            }
+                        }
                         if let wb = device.wbStatus {
                             HStack(spacing: 6) {
                                 Text("JAMF").font(.caption).foregroundStyle(.secondary)
